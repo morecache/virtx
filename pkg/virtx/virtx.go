@@ -71,6 +71,10 @@ func Init() {
 	servemux.HandleFunc("GET /hosts/{uuid}", host_get)
 	servemux.HandleFunc("GET /hosts/{uuid}/stats", host_stats_get)
 
+	/* the switch of the action surface of the cluster */
+	servemux.HandleFunc("GET /ha", ha_get)
+	servemux.HandleFunc("PUT /ha", ha_put)
+
 	service = Service{
 		servemux: servemux,
 		server: http.Server{

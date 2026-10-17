@@ -439,3 +439,21 @@ func (c *EventCode) Parse(s string) error {
 	}
 	return errors.New("unknown event code")
 }
+
+/*
+ * HaState is the switch of the action surface of a cluster, and how far the
+ * hosts have got in applying it: the generation of the policy on the shared
+ * registration tree, the generation this host answered with, the hosts that
+ * have applied it and the ones that have not.
+ *
+ * It is hand written, like the other adjustments above: the model generator has
+ * no source for it in this tree.
+ */
+type HaState struct {
+	Enabled bool `json:"enabled"`
+	Generation int64 `json:"generation"`
+	Applied int64 `json:"applied"`
+	Acked []string `json:"acked"`
+	Missing []string `json:"missing"`
+	Pending bool `json:"pending"`
+}

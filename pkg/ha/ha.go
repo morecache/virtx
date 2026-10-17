@@ -50,6 +50,7 @@ package ha
 
 import (
 	"errors"
+	"sync"
 	"fmt"
 	"os"
 	"time"
@@ -128,8 +129,108 @@ func Get() State {
 }
 
 /* Enable turns the action surface on: write the policy, then wait for the acks. */
+/*
+ * init installs the half that writes a change of the action surface.
+ *
+ * Every virtxd needs it, and not only the process an operator talked to: a request
+ * is served by whoever holds the office, which is another host in general.
+ * Installing it when a request is made left the host that took the office because
+ * of that request with no writer at all, so the request was never served and the
+ * switch never changed (measured 2026-10-13: a request made on h11 moved the
+ * office to h12, and h12 wrote nothing at all).
+ */
+func init() {
+	coord.Set_change_writer(Apply_pending)
+}
+
 func Enable() (State, error) {
-	return change(true)
+	return Request(true)
+}
+
+/*
+ * Request registers a change of the action surface and answers at once.
+ *
+ * The change is written by whoever holds the coordinator office, and this host
+ * now has a reason to hold it: a request this host cannot write yet is written in
+ * the next round in which it holds the office. The answer is the state as it is, with
+ * Pending set: registering a change is not waiting for it, and the caller chooses -
+ * virtx's enable and disable wait for the acknowledgements and report where they have
+ * got, and a caller that does not want to wait reads Pending and asks again later
+ * (measured 2026-10-13: a caller that was simply cancelled after fifteen seconds read
+ * that as a failure, which is why waiting is the caller's decision and not built in).
+ */
+func Request(enabled bool) (State, error) {
+	var (
+		st State
+		err error
+	)
+	request_mu.Lock()
+	request_enabled = enabled
+	request_asked = true
+	request_mu.Unlock()
+	coord.Request_change()
+	/*
+	 * The shared tree carries the request, so that the office serves it whichever
+	 * host it is on: asking is not the same as writing, and the host that was asked
+	 * is not necessarily the host that holds the office.
+	 */
+	err = policy.Save_request(enabled, machine.Uuid())
+	if (err != nil) {
+		return State{}, fmt.Errorf("%s cannot be written (%s)", policy.REQUEST_PATH, err.Error())
+	}
+	st = Get()
+	st.Enabled = enabled
+	st.Pending = true
+	return st, nil
+}
+
+/*
+ * Apply_pending writes the change that was asked for. The coordinator's round
+ * calls it while this host holds the office; it answers whether the request is
+ * settled - a write that fails stays pending and is tried again next round.
+ */
+func Apply_pending() bool {
+	var (
+		enabled bool
+		asked bool
+		ok bool
+		st State
+		err error
+		req policy.Request
+	)
+	request_mu.Lock()
+	enabled = request_enabled
+	asked = request_asked
+	request_mu.Unlock()
+	if (!asked) {
+		/* the request may have been made on another host: it is in the shared tree */
+		req, ok, err = policy.Load_request()
+		if (err != nil || !ok) {
+			return true
+		}
+		enabled = req.Enabled
+	}
+	st, err = change(enabled)
+	if (err != nil) {
+		logger.Log("ha: the change that was asked for cannot be written yet: %s", err.Error())
+		return false
+	}
+	request_mu.Lock()
+	request_asked = false
+	request_mu.Unlock()
+	/* the request has been served: no host has to serve it again */
+	err = policy.Clear_request()
+	if (err != nil) {
+		logger.Log("ha: the served request in %s cannot be removed: %s", policy.REQUEST_PATH, err.Error())
+	}
+	if (!enabled) {
+		if (!st.Pending) {
+			clear_reports()
+		} else {
+			go settle_reports(st)
+		}
+	}
+	return true
 }
 
 /*
@@ -138,27 +239,14 @@ func Enable() (State, error) {
  * reported as such, and the reports are then left alone.
  */
 func Disable() (State, error) {
-	var (
-		st State
-		err error
-	)
-	st, err = change(false)
-	if (err != nil) {
-		return st, err
-	}
-	if (!st.Pending) {
-		clear_reports()
-		return st, nil
-	}
-	/*
-	 * The reports are erased once every host has applied the switch being off:
-	 * erasing them earlier would throw away the report of a host that still runs
-	 * with the old policy. The waiting happens away from the caller, which has
-	 * been answered already.
-	 */
-	go settle_reports(st)
-	return st, nil
+	return Request(false)
 }
+
+var (
+	request_mu sync.Mutex
+	request_enabled bool
+	request_asked bool
+)
 
 /*
  * settle_reports waits for the hosts to apply the generation that is already
@@ -193,7 +281,7 @@ func change(enabled bool) (State, error) {
 	)
 	_, mine = coord.Term()
 	if (!mine) {
-		return State{}, fmt.Errorf("%s: %s", Err_not_coordinator.Error(), coord.Result())
+		return State{}, fmt.Errorf("%w: %s", Err_not_coordinator, coord.Result())
 	}
 	p, err = policy.Load(policy.PATH)
 	if (err != nil && !errors.Is(err, os.ErrNotExist)) {
@@ -202,6 +290,15 @@ func change(enabled bool) (State, error) {
 	}
 	if (p == nil) {
 		p = policy.Defaults()
+	}
+	if (p.Ha_enabled == enabled) {
+		/*
+		 * The change that was asked for is the change already in force: two hosts
+		 * may serve the same request while the office moves, and a second
+		 * generation for the same switch would only be churn.
+		 */
+		st = State{ Enabled: enabled, Generation: p.Generation }
+		return collect(st), nil
 	}
 	applied.Generation = applied_generation()
 	gen = policy.Next_generation(p, applied)

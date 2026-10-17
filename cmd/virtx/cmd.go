@@ -100,6 +100,21 @@ func init() {
 	cmd_get_host.Flags().BoolVarP(&virtx.cpu, "cpu", "c", false, "Show CPU details")
 	//cmd_get_host.Flags().BoolVarP(&virtx.net, "net", "n", false, "Show network details")
 	cmd_get_host.Flags().BoolVarP(&virtx.sys, "sys", "s", false, "Show system/firmware info")
+	var cmd_get_ha = &cobra.Command{
+		Use:   "ha",
+		Short: "Show the switch of the action surface, and which hosts applied it",
+		Long:  "Show whether the hosts of this cluster may act on a judgement, and how far the change of that answer has got",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if (virtx.ok) {
+				if (virtx.result != nil) {
+					ha_show(virtx.result.(*openapi.HaState))
+				}
+			} else {
+				ha_get_req()
+			}
+		},
+	}
 	var cmd_get_vm = &cobra.Command{
 		Use:   "vm UUID",
 		Short: "Fetch and show all details of the VM",
@@ -428,6 +443,44 @@ func init() {
 	}
 	cmd_takeover_vm.Flags().StringVarP(&virtx.vm_register_options.Host, "host", "h", "", "Take over the VM on the specified host")
 	cmd_takeover_vm.MarkFlagRequired("host")
+	var cmd_enable = &cobra.Command{
+		Use:   "enable",
+		Short: "Enable a cluster wide capability",
+	}
+	var cmd_enable_ha = &cobra.Command{
+		Use:   "ha",
+		Short: "Let the hosts act on a judgement",
+		Long:  "Turn the action surface on: a restart judgement whose evidence is complete may then drive a takeover. The coordinator writes the change and every host acknowledges it",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if (virtx.ok) {
+				if (virtx.result != nil) {
+					ha_show(virtx.result.(*openapi.HaState))
+				}
+			} else {
+				ha_set_req(true)
+			}
+		},
+	}
+	var cmd_disable = &cobra.Command{
+		Use:   "disable",
+		Short: "Disable a cluster wide capability",
+	}
+	var cmd_disable_ha = &cobra.Command{
+		Use:   "ha",
+		Short: "Stop the hosts from acting on a judgement",
+		Long:  "Turn the action surface off: the hosts keep judging and logging, and do nothing. Once every host has applied the change, the state the change left behind is cleared",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if (virtx.ok) {
+				if (virtx.result != nil) {
+					ha_show(virtx.result.(*openapi.HaState))
+				}
+			} else {
+				ha_set_req(false)
+			}
+		},
+	}
 	var cmd_log = &cobra.Command{
 		Use:   "log",
 		Short: "Show the log of a resource",
@@ -471,6 +524,7 @@ func init() {
 	cmd_list.AddCommand(cmd_list_vm)
 	cmd.AddCommand(cmd_get)
 	cmd_get.AddCommand(cmd_get_host)
+	cmd_get.AddCommand(cmd_get_ha)
 	cmd_get.AddCommand(cmd_get_vm)
 	cmd_get.AddCommand(cmd_get_stats)
 	cmd_get_stats.AddCommand(cmd_get_stats_vm)
@@ -503,6 +557,10 @@ func init() {
 	cmd.AddCommand(cmd_unregister)
 	cmd_unregister.AddCommand(cmd_unregister_vm)
 	cmd.AddCommand(cmd_takeover)
+	cmd.AddCommand(cmd_enable)
+	cmd_enable.AddCommand(cmd_enable_ha)
+	cmd.AddCommand(cmd_disable)
+	cmd_disable.AddCommand(cmd_disable_ha)
 	cmd_takeover.AddCommand(cmd_takeover_vm)
 	cmd.AddCommand(cmd_log)
 	cmd_log.AddCommand(cmd_log_vm)
