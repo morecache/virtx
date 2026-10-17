@@ -26,6 +26,7 @@ import (
 
 	"suse.com/virtx/pkg/ha"
 	"suse.com/virtx/pkg/httpx"
+	"suse.com/virtx/pkg/inventory"
 	"suse.com/virtx/pkg/logger"
 	"suse.com/virtx/pkg/model"
 )
@@ -41,7 +42,28 @@ func ha_state_of(st ha.State) openapi.HaState {
 	o.Acked = st.Acked
 	o.Missing = st.Missing
 	o.Pending = st.Pending
+	o.Names = ha_names_of(append(append([]string(nil), st.Acked...), st.Missing...))
 	return o
+}
+
+/*
+ * ha_names_of is what the inventory calls the hosts of a state, so that a client
+ * can say which host is behind instead of printing a uuid and leaving the reader
+ * to look it up.
+ */
+func ha_names_of(uuids []string) map[string]string {
+	var (
+		names map[string]string = make(map[string]string)
+		info inventory.HostInfo
+		err error
+	)
+	for _, uuid := range uuids {
+		info, err = inventory.Get_hostinfo(uuid)
+		if (err == nil && info.Name != "") {
+			names[uuid] = info.Name
+		}
+	}
+	return names
 }
 
 /* ha_response encodes one switch state and answers with it. */

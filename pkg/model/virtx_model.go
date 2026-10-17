@@ -456,4 +456,6 @@ type HaState struct {
 	Acked []string `json:"acked"`
 	Missing []string `json:"missing"`
 	Pending bool `json:"pending"`
+	/* Names is what the inventory calls each of the hosts listed above. */
+	Names map[string]string `json:"names"`
 }

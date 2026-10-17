@@ -60,6 +60,10 @@ func ha_show(st *openapi.HaState) {
 	}
 	fmt.Fprintf(virtx.w, "NOT YET\t%d\n", len(st.Missing))
 	for _, uuid := range st.Missing {
+		if (st.Names[uuid] != "") {
+			fmt.Fprintf(virtx.w, "  waiting for\t%s (%s)\n", uuid, st.Names[uuid])
+			continue
+		}
 		fmt.Fprintf(virtx.w, "  waiting for\t%s\n", uuid)
 	}
 }
