@@ -46,12 +46,14 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"suse.com/virtx/pkg/hastate"
 	"suse.com/virtx/pkg/inventory"
 	"suse.com/virtx/pkg/logger"
-	openapi "suse.com/virtx/pkg/model"
 	"suse.com/virtx/pkg/reg"
 	"suse.com/virtx/pkg/ts"
 	"suse.com/virtx/pkg/verdict"
+	openapi "suse.com/virtx/pkg/model"
 )
 
 /*
@@ -524,6 +526,45 @@ func landing_candidates(r verdict.Round) []Landing_candidate {
  * returns one line for the judgement loop's log; its own audit lines carry the
  * vm_uuid, the epoch, the landing, the outcome and the duration.
  */
+/*
+ * iso_stopped_vms keeps the VMs an isolated host listed as stopped.
+ *
+ * That host is alive, so its own report is what says which of its VMs it gave up
+ * (isolation_stopped_vms). A VM it did not stop is still its own: free leases mean
+ * the VM is not running, which is a reason to leave it alone and not a reason to
+ * start it somewhere else. A host that is gone says nothing and is not filtered:
+ * everything it had is taken over, as it always was.
+ */
+func iso_stopped_vms(victim_uuid string, candidates []string) []string {
+	var (
+		pub hastate.Published
+		peer hastate.Peer
+		vm string
+		stopped string
+		kept []string
+		listed bool
+	)
+	pub = hastate.Published_view()
+	for _, peer = range pub.Peers {
+		if (peer.Host_uuid != victim_uuid) {
+			continue
+		}
+		for _, vm = range candidates {
+			listed = false
+			for _, stopped = range peer.Isolation_stopped_vms {
+				if (stopped == vm) {
+					listed = true
+					break
+				}
+			}
+			if (listed) {
+				kept = append(kept, vm)
+			}
+		}
+	}
+	return kept
+}
+
 func Drive_round(r verdict.Round) string {
 	var (
 		epoch int64
@@ -559,6 +600,18 @@ func Drive_round(r verdict.Round) string {
 		logger.Log("coord: action suppressed host=%s row=%s reason=victim-unreadable error=%s",
 			r.Victim_uuid, r.Row, err.Error())
 		return "action=victim-unreadable"
+	}
+	if (r.Row == verdict.ROW_ISOLATED) {
+		/*
+		 * An isolated host is alive: it is the one that decided what to stop, and
+		 * its report says which VMs those were. Only those may be taken over.
+		 */
+		vm_uuids = iso_stopped_vms(r.Victim_uuid, vm_uuids)
+		logger.Log("coord: action host=%s row=%s vms=%d reason=relaunch-only-self-shut-down-vms",
+			r.Victim_uuid, r.Row, len(vm_uuids))
+		if (len(vm_uuids) == 0) {
+			return "action=suppressed reason=isolated-nothing-stopped"
+		}
 	}
 	budget = max_inflight() - count_inflight()
 	if (budget < 1) {
