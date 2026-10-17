@@ -126,6 +126,14 @@ func Init(host_uuid string) error {
 	if (err != nil) {
 		return errors.New("lm_inq_lockspace: " + err.Error())
 	}
+	/*
+	 * The lockspace is joined, so the daemon knows this host's host_id: give
+	 * back the resource leases this host still holds there from an earlier
+	 * life but no longer owns (stale.go). It never blocks the startup, and
+	 * the coordinator's first classification happens later. The host_id is
+	 * passed in: we hold lm.m here, so the sweep must not read it itself.
+	 */
+	Release_stale_registrations(lm.host_id)
 	return nil
 }
 
@@ -369,10 +377,6 @@ func lm_leave_lockspace() error {
 }
 
 /*
- * Create and initialize a new resource file that doesn't exist.
- * If the resource already exists, fail.
- */
-/*
  * Get_coord_path is where the coordinator lease lives: one flat file directly
  * in the lock directory (the resource name is already unique), rather than the
  * per-resource directory layout the VM disk leases use. The decision layer's
@@ -381,6 +385,23 @@ func lm_leave_lockspace() error {
  */
 func Get_coord_path(resource_name string) string {
 	return LOCK_DIR + resource_name
+}
+
+/*
+ * tmp_resource_path is the temporary file one create attempt initializes before
+ * it is linked into place under the final name.
+ *
+ * The name must be unique per attempt: every host creates the same resource on
+ * the same shared storage, and with one fixed name two hosts delete each
+ * other's half-written file, which makes the link(2) below fail with ENOENT
+ * (measured 2026-10-07: "link /vms/lock/__VIRTX__COORD.tmp
+ * /vms/lock/__VIRTX__COORD: no such file or directory"). The writer's uuid, the
+ * pid and the nanosecond clock keep it unique without any coordination and say
+ * who left it behind, the same way Create_resource's MkdirTemp does for the
+ * per-resource directory layout.
+ */
+func tmp_resource_path(final_path string, uuid string) string {
+	return fmt.Sprintf("%s.tmp.%s.%d.%d", final_path, uuid, os.Getpid(), time.Now().UnixNano())
 }
 
 /*
@@ -395,12 +416,35 @@ func Get_coord_path(resource_name string) string {
  * means someone else created it.
  */
 func Create_resource_flat(resource_name string, uuid string) error {
+	return create_resource_flat(Get_coord_path(resource_name), resource_name, uuid, lm_init_resource_file)
+}
+
+/*
+ * create_resource_flat is Create_resource_flat with the final path and the
+ * initializer passed in, so that the create race can be tested with real files
+ * and without sanlock or the lock directory.
+ *
+ * The temporary file is unique per attempt (tmp_resource_path), so two hosts
+ * creating the same resource cannot disturb each other: each one initializes
+ * its own file and only the link(2) into the final name decides the winner.
+ * That link either succeeds, or fails with EEXIST because another host got
+ * there first - and EEXIST is the only outcome that means "it exists". ENOENT
+ * means our own temporary file went away, which is a real failure and is
+ * reported as such (it must never be read as "already exists").
+ *
+ * The temporary file is removed on every path this function can take (a failed
+ * initializer, a lost race, a successful link). A process that is killed in
+ * between leaves one uniquely named file behind: nothing ever reuses that name,
+ * so it is litter rather than a hazard, and only an operator should remove it -
+ * a sweep cannot tell a dead writer's file from a live one's.
+ */
+func create_resource_flat(final_path string, resource_name string, uuid string,
+                          init func(resource_path string, resource_name string, uuid string) error) error {
 	var (
 		err error
 		lerr error
-		tmp_path, final_path, lvb string
+		tmp_path, lvb string
 	)
-	final_path = Get_coord_path(resource_name)
 	_, err = os.Stat(final_path)
 	if (err == nil) {
 		lvb, lerr = Read_lvb(final_path)
@@ -410,25 +454,33 @@ func Create_resource_flat(resource_name string, uuid string) error {
 		logger.Debug("lockman: %s already exists (LOCK_VALUE %q)", resource_name, lvb)
 		return nil
 	}
-	tmp_path = final_path + ".tmp"
-	_ = os.Remove(tmp_path)
-	err = lm_init_resource_file(tmp_path, resource_name, uuid)
+	tmp_path = tmp_resource_path(final_path, uuid)
+	err = init(tmp_path, resource_name, uuid)
 	if (err != nil) {
 		_ = os.Remove(tmp_path)
 		return err
 	}
 	err = os.Link(tmp_path, final_path)
 	_ = os.Remove(tmp_path)
-	if (err != nil) {
-		if (errors.Is(err, os.ErrExist)) {
-			logger.Debug("lockman: %s was created by someone else first", resource_name)
-			return nil
-		}
-		return err
+	if (err == nil) {
+		return nil
 	}
-	return nil
+	if (errors.Is(err, os.ErrExist)) {
+		/* another host linked its file in first: that file is the resource */
+		logger.Debug("lockman: %s was created by someone else first", resource_name)
+		return nil
+	}
+	if (errors.Is(err, os.ErrNotExist)) {
+		return fmt.Errorf("cannot put %s in place: its temporary file is gone (not \"already exists\"): %w",
+		                  resource_name, err)
+	}
+	return err
 }
 
+/*
+ * Create and initialize a new resource file that doesn't exist.
+ * If the resource already exists, fail.
+ */
 func Create_resource(resource_name string, uuid string) error {
 	var (
 		err error
