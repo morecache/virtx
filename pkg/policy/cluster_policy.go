@@ -248,22 +248,39 @@ func (p *Policy) fail_closed(path string) {
 	p.remember(KEY_HA_ENABLED, strconv.FormatBool(DEFAULT_HA_ENABLED), FROM_DEFAULT)
 }
 
+/*
+ * Parse returns the documented defaults with one policy text applied over them.
+ * It is what Load ends up doing, and what a caller uses for a text it has
+ * already read itself (the local copy of the policy, for instance).
+ */
+func Parse(text string) *Policy {
+	var (
+		p *Policy
+	)
+	p = Defaults()
+	p.load_text(text)
+	return p
+}
+
+/* load_text applies one policy text over whatever the policy already holds. */
+func (p *Policy) load_text(text string) {
+	for _, raw := range strings.Split(text, "\n") {
+		p.load_line(raw)
+	}
+	p.build_isolation_addrs()
+}
+
 /* load_file applies one file over the defaults. Only a read error is returned. */
 func (p *Policy) load_file(path string) error {
 	var (
 		err error
 		data []byte
-		text string
 	)
 	data, err = os.ReadFile(path)
 	if (err != nil) {
 		return err
 	}
-	text = string(data)
-	for _, raw := range strings.Split(text, "\n") {
-		p.load_line(raw)
-	}
-	p.build_isolation_addrs()
+	p.load_text(string(data))
 	return nil
 }
 
