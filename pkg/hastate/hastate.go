@@ -116,6 +116,8 @@ type State struct {
 	Ts        int64  `json:"ts"`
 	Isolated  int    `json:"isolated"`
 	Probed    int    `json:"probed"`
+	/* Policy_gen is the generation of the cluster policy this host applied. */
+	Policy_gen int64 `json:"policy_gen"`
 	Reason    string `json:"reason"`
 	Heartbeat int64  `json:"heartbeat"`
 }
@@ -133,6 +135,8 @@ type Peer struct {
 	Report     string /* fresh-0/fresh-1/stale/unreadable/absent */
 	Reason     string
 	Probed     int    /* the peer's own probed flag: 0 means it never probed a judge */
+	/* Policy_gen is the generation the peer says it has applied, unreadable as 0. */
+	Policy_gen int64
 	Ts         int64
 	Age_ms     int64
 	Note       string
@@ -158,6 +162,7 @@ type view struct {
 	lease_err  error
 	policy     *policy.Policy
 	origin     policy.Origin
+	policy_gen int64
 }
 
 type reader struct {
@@ -487,6 +492,7 @@ func (r *reader) Read_peers(now int64) ([]Peer, error) {
 		p.Report = report
 		p.Reason = s.Reason
 		p.Probed = s.Probed
+		p.Policy_gen = s.Policy_gen
 		p.Ts = s.Ts
 		p.Age_ms = age
 		p.Note = note
@@ -632,6 +638,12 @@ func observe(r *reader, seconds int, mu *sync.Mutex, latest *view) {
 		if (v.policy != nil) {
 			r.set_policy(v.policy)
 		}
+		/*
+		 * The generation this host has applied is what the other hosts see as
+		 * this host's acknowledgement of a policy change: it is written into the
+		 * report below, with the policy itself.
+		 */
+		v.policy_gen = policy.R.Applied().Generation
 		v.addrs = judge_addresses(v.policy)
 		/*
 		 * Say which addresses this host judges itself by, and where they came
@@ -740,6 +752,7 @@ func Loop(seconds int) {
 		s.Ts = ts.Now()
 		s.Isolated = isolated
 		s.Probed = probed
+		s.Policy_gen = v.policy_gen
 		s.Reason = REASON_RUNNING
 		if (isolated != 0) {
 			s.Reason = REASON_ISOLATED
