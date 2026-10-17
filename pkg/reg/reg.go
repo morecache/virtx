@@ -243,6 +243,38 @@ func Access(host_uuid string, vm_uuid string) error {
 	return err
 }
 
+/*
+ * Owner returns the host that registers this VM, or "" when no host does.
+ *
+ * The registration tree is the authority on which host owns a VM: a takeover
+ * moves the directory to the landing host while the rescued host keeps its local
+ * libvirt definition, so asking the tree is the only way to tell a leftover
+ * definition from a VM of our own.
+ *
+ * An error means the tree could not be read at all, which a caller has to treat
+ * as "unknown" rather than as "nobody owns it".
+ */
+func Owner(vm_uuid string) (string, error) {
+	var (
+		hosts []string
+		err error
+	)
+	hosts, err = Hosts()
+	if (err != nil) {
+		return "", err
+	}
+	for _, host_uuid := range hosts {
+		err = Access(host_uuid, vm_uuid)
+		if (err == nil) {
+			return host_uuid, nil
+		}
+		if (!os.IsNotExist(err)) {
+			return "", err
+		}
+	}
+	return "", nil
+}
+
 /* get all the VM Uuids for a host */
 func Uuids(host_uuid string) ([]string, error) {
 	var (

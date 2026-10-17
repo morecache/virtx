@@ -18,20 +18,20 @@
 package hypervisor
 
 import (
-	"time"
+	"bufio"
+	"bytes"
 	"encoding/xml"
 	"errors"
+	"libvirt.org/go/libvirt"
+	"libvirt.org/go/libvirtxml"
 	"net"
 	"os"
 	"path/filepath"
-	"bytes"
-	"bufio"
-	"strings"
-	"strconv"
 	"reflect"
-
-	"libvirt.org/go/libvirt"
-	"libvirt.org/go/libvirtxml"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 
 	"suse.com/virtx/pkg/model"
 	"suse.com/virtx/pkg/logger"
@@ -41,9 +41,17 @@ import (
 	"suse.com/virtx/pkg/ts"
 	"suse.com/virtx/pkg/machine"
 	"suse.com/virtx/pkg/vmdef"
-
 	. "suse.com/virtx/pkg/constants"
 )
+/*
+ * said_skip remembers the reason last given for each leftover local domain: such a
+ * definition stays for as long as the host is up, and a warning that repeats every
+ * snapshot round stops being read (the same rule the hastate notes follow). It is said
+ * again when the reason changes, which is when there is something to do.
+ */
+var said_skip = map[string]string{}
+var said_skip_mu sync.Mutex
+
 
 /* immutable host fields of SystemInfo */
 type SystemInfoImm struct {
@@ -183,6 +191,23 @@ func system_info_save_vminfo(si *SystemInfo) {
 }
 
 /*
+ * snapshot_host_uuid is the "me" of the local-domain policy: the host uuid this
+ * snapshot already carries (si.Host.Uuid, set from caps.Host.UUID in step 1 of
+ * system_info_get(), before the domain loop).
+ *
+ * It is deliberately not machine.Uuid(): system_info_init() fills that one in
+ * only after the whole first snapshot is built, so during the first domain loop
+ * it is still empty. Taking the value from the snapshot makes the first round as
+ * correct as every later one by construction - an own domain is never mistaken
+ * for one registered on another host - and leaves no "empty means mine" special
+ * case in the policy. An empty si.Host.Uuid cannot reach this point: see the
+ * guard in system_info_get_immutable().
+ */
+func snapshot_host_uuid(si *SystemInfo) string {
+	return si.Host.Uuid
+}
+
+/*
  * Regularly fetch all system information (host info and vms info), and send it via system_info_ch.
  */
 func system_info_loop(seconds int) error {
@@ -316,6 +341,8 @@ func system_info_get() (SystemInfo, error) {
 			vm SystemInfoVm
 			oldvm SystemInfoVm
 			present bool
+			owner, policy, why string
+			oerr error
 		)
 		err = get_domain_event(&d, &vm.VmInfo.VmEvent)
 		if (err != nil) {
@@ -378,6 +405,33 @@ func system_info_get() (SystemInfo, error) {
 		total_vm_net_tx_bw += vm.stats.NetTxBw
 		total_vm_disk_rd_bw += vm.stats.DiskRdBw
 		total_vm_disk_wr_bw += vm.stats.DiskWrBw
+		/*
+		 * Measured 2026-10-05: a rescued host comes back with the domain
+		 * it used to own still defined in its libvirt, while the takeover moved
+		 * the registration to the landing host. Such a leftover is not this
+		 * host's VM, so it must not be published as one - the registration tree
+		 * is the authority (local_domain_policy) - and it must not stop the
+		 * daemon either. Its resources are still counted above, so this host's
+		 * capacity numbers stay honest.
+		 */
+		owner, oerr = reg.Owner(vm.Uuid)
+		policy, why = local_domain_policy(snapshot_host_uuid(&si), owner, oerr == nil)
+		if (policy == LOCAL_SKIP) {
+			var (
+				changed bool
+			)
+			said_skip_mu.Lock()
+			changed = (said_skip[vm.Uuid] != why)
+			said_skip[vm.Uuid] = why
+			said_skip_mu.Unlock()
+			if (changed) {
+				logger.Log("WARNING: local libvirt domain %s is %s: leaving it out of this host's view, keeping the definition (see local_domain_policy)", vm.Uuid, why)
+			}
+			continue
+		}
+		if (oerr != nil) {
+			logger.Log("WARNING: local libvirt domain %s: %s", vm.Uuid, why)
+		}
 		vms[vm.Uuid] = vm
 	}
 	/* now calculate host resources */
@@ -553,6 +607,16 @@ func system_info_get_immutable(imm *SystemInfoImm) error {
 	err = imm.caps.Unmarshal(data)
 	if (err != nil) {
 		return err
+	}
+	if (imm.caps.Host.UUID == "") {
+		/*
+		 * Every identity this host publishes is keyed on this uuid: the
+		 * registration directory, machine.Uuid(), the Host of every VM in the
+		 * snapshot, and local_domain_policy()'s comparison. Refuse the snapshot
+		 * instead of running half-identified - on the cold start the loop turns
+		 * this into a fatal error.
+		 */
+		return errors.New("libvirt reported no host uuid in the capabilities")
 	}
 	data, err = hv.conn.GetSysinfo(0)
 	if (err != nil) {
