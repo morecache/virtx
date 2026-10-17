@@ -151,17 +151,21 @@ func iso_one(me string, uuid string, p *policy.Policy, now_ms int64) {
 	}
 	reachable = shared_tree_readable()
 	owner, err = reg.Owner(uuid)
-	if (err != nil) {
-		reachable = false
-	}
-	if (reachable && owner != "" && owner != me) {
+	if (!reachable) {
+		logger.Log("isolation: the shared tree cannot be read: stopping %s (a host that lost its storage must not keep writing to it)", uuid)
+	} else if (err != nil) {
+		/*
+		 * The tree answers, but this VM's owner cannot be told - a second host
+		 * directory holds it. Nobody may act on a VM whose owner is in doubt.
+		 */
+		note_once(uuid, "conflict", "the registration of the VM cannot be resolved: keeping it")
+		return
+	} else if (owner != "" && owner != me) {
 		logger.Log("isolation: %s is registered under %s now: it has been taken over, stopping it here", uuid, owner)
-	} else if (reachable) {
+	} else {
 		/* the registration has not moved and the storage answers: this VM stays ours */
 		note_once(uuid, "keep", "the VM is still registered here and the storage is readable: keeping it")
 		return
-	} else {
-		logger.Log("isolation: the shared tree cannot be read: stopping %s (a host that lost its storage must not keep writing to it)", uuid)
 	}
 	if (!vm_running(uuid)) {
 		iso_run.stopped = append(iso_run.stopped, uuid)

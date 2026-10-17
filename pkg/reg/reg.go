@@ -254,25 +254,44 @@ func Access(host_uuid string, vm_uuid string) error {
  * An error means the tree could not be read at all, which a caller has to treat
  * as "unknown" rather than as "nobody owns it".
  */
+/*
+ * Owner answers which host the registration tree gives a VM to, and "" when it
+ * gives it to nobody.
+ *
+ * A VM that is registered under more than one host is a conflict and not a
+ * choice: the move of a registration is a rename, so this only happens when
+ * something outside this code left a copy behind. Picking one of them - which is
+ * what returning the first match did - would let a host act on a VM whose
+ * ownership the cluster cannot tell, so the conflict is reported and the callers
+ * keep their fail-closed behaviour: the snapshot warns, the isolation response
+ * keeps the VM.
+ */
 func Owner(vm_uuid string) (string, error) {
 	var (
 		hosts []string
+		owner string
+		host_uuid string
 		err error
 	)
 	hosts, err = Hosts()
 	if (err != nil) {
 		return "", err
 	}
-	for _, host_uuid := range hosts {
+	for _, host_uuid = range hosts {
 		err = Access(host_uuid, vm_uuid)
 		if (err == nil) {
-			return host_uuid, nil
+			if (owner == "") {
+				owner = host_uuid
+				continue
+			}
+			return "", fmt.Errorf("registration conflict: %s is registered under %s and %s",
+			                      vm_uuid, owner, host_uuid)
 		}
 		if (!os.IsNotExist(err)) {
 			return "", err
 		}
 	}
-	return "", nil
+	return owner, nil
 }
 
 /* get all the VM Uuids for a host */
