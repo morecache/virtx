@@ -116,6 +116,8 @@ type State struct {
 	Ts        int64  `json:"ts"`
 	Isolated  int    `json:"isolated"`
 	Probed    int    `json:"probed"`
+	/* Isolation_stopped_vms are the VMs this host stopped under its isolation response. */
+	Isolation_stopped_vms []string `json:"isolation_stopped_vms,omitempty"`
 	/* Policy_gen is the generation of the cluster policy this host applied. */
 	Policy_gen int64 `json:"policy_gen"`
 	Reason    string `json:"reason"`
@@ -140,6 +142,8 @@ type Peer struct {
 	Ts         int64
 	Age_ms     int64
 	Note       string
+	/* Isolation_stopped_vms are the VMs the peer says it stopped while isolated. */
+	Isolation_stopped_vms []string
 }
 
 /* seen is our own memory of one peer's report: we judge freshness by watching it change. */
@@ -492,6 +496,7 @@ func (r *reader) Read_peers(now int64) ([]Peer, error) {
 		p.Report = report
 		p.Reason = s.Reason
 		p.Probed = s.Probed
+		p.Isolation_stopped_vms = s.Isolation_stopped_vms
 		p.Policy_gen = s.Policy_gen
 		p.Ts = s.Ts
 		p.Age_ms = age
@@ -520,8 +525,21 @@ func describe(p Peer) string {
 	if (p.Note != "") {
 		note = " (" + p.Note + ")"
 	}
-	return fmt.Sprintf("%s(%d) %s %s %s probed=%d age=%ds%s",
-		name, p.Host_id, p.Host_state, p.Report, reason, p.Probed, p.Age_ms / 1000, note)
+	return fmt.Sprintf("%s(%d) %s %s %s probed=%d age=%ds%s%s",
+		name, p.Host_id, p.Host_state, p.Report, reason, p.Probed, p.Age_ms / 1000, note,
+		iso_stopped_note(p))
+}
+
+/*
+ * iso_stopped_note names the VMs a peer says it stopped under its isolation
+ * response, and says nothing at all when it stopped none - an empty list is the
+ * normal state and must not lengthen every line.
+ */
+func iso_stopped_note(p Peer) string {
+	if (len(p.Isolation_stopped_vms) == 0) {
+		return ""
+	}
+	return fmt.Sprintf(" iso-stopped=%s", strings.Join(p.Isolation_stopped_vms, ","))
 }
 
 /*
@@ -534,8 +552,9 @@ func change_key(probed int, isolated int, v view) string {
 	)
 	parts = append(parts, fmt.Sprintf("probed=%d isolated=%d", probed, isolated))
 	for _, p := range v.peers {
-		parts = append(parts, fmt.Sprintf("%s/%d/%s/%s/%s/%d/%s",
-			p.Host_uuid, p.Host_id, p.Host_state, p.Report, p.Reason, p.Probed, p.Note))
+		parts = append(parts, fmt.Sprintf("%s/%d/%s/%s/%s/%d/%s/%s",
+			p.Host_uuid, p.Host_id, p.Host_state, p.Report, p.Reason, p.Probed, p.Note,
+			strings.Join(p.Isolation_stopped_vms, ",")))
 	}
 	for _, l := range v.leases {
 		parts = append(parts, fmt.Sprintf("%s/%d/%d/%d", l.Name, l.Timestamp, l.Owner_id, l.Owner_gen))
@@ -752,6 +771,7 @@ func Loop(seconds int) {
 		s.Ts = ts.Now()
 		s.Isolated = isolated
 		s.Probed = probed
+		s.Isolation_stopped_vms = isolation_round(me, isolated, probed, s.Ts)
 		s.Policy_gen = v.policy_gen
 		s.Reason = REASON_RUNNING
 		if (isolated != 0) {
