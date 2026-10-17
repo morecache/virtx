@@ -372,6 +372,63 @@ func lm_leave_lockspace() error {
  * Create and initialize a new resource file that doesn't exist.
  * If the resource already exists, fail.
  */
+/*
+ * Get_coord_path is where the coordinator lease lives: one flat file directly
+ * in the lock directory (the resource name is already unique), rather than the
+ * per-resource directory layout the VM disk leases use. The decision layer's
+ * text calls it a "resource file", and there is no reason to wrap it in
+ * a directory of the same name.
+ */
+func Get_coord_path(resource_name string) string {
+	return LOCK_DIR + resource_name
+}
+
+/*
+ * Create_resource_flat initializes one resource file directly in LOCK_DIR.
+ * It mirrors Create_resource (initialize under a temporary name, then link it
+ * into place so that parallel creations cannot replace each other); a flat file
+ * cannot use rename for that, because rename would silently overwrite, so it
+ * uses link(2), which fails with EEXIST instead.
+ *
+ * A file that already exists is not an error here: the coordinator's rule is
+ * "create first, then take" (row 5a), and losing that race just
+ * means someone else created it.
+ */
+func Create_resource_flat(resource_name string, uuid string) error {
+	var (
+		err error
+		lerr error
+		tmp_path, final_path, lvb string
+	)
+	final_path = Get_coord_path(resource_name)
+	_, err = os.Stat(final_path)
+	if (err == nil) {
+		lvb, lerr = Read_lvb(final_path)
+		if (lerr != nil) {
+			return nil /* it exists, which is all we need to know */
+		}
+		logger.Debug("lockman: %s already exists (LOCK_VALUE %q)", resource_name, lvb)
+		return nil
+	}
+	tmp_path = final_path + ".tmp"
+	_ = os.Remove(tmp_path)
+	err = lm_init_resource_file(tmp_path, resource_name, uuid)
+	if (err != nil) {
+		_ = os.Remove(tmp_path)
+		return err
+	}
+	err = os.Link(tmp_path, final_path)
+	_ = os.Remove(tmp_path)
+	if (err != nil) {
+		if (errors.Is(err, os.ErrExist)) {
+			logger.Debug("lockman: %s was created by someone else first", resource_name)
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 func Create_resource(resource_name string, uuid string) error {
 	var (
 		err error
@@ -512,15 +569,19 @@ func lm_pread(fd int, buf []byte, offset int64) error {
 }
 
 /*
- * set the LOCK_VALUE (Lock Value Block). Ideally we would have a sanlock client command for this,
- * but this works too.
+ * write an LOCK_VALUE payload: it lives in one block at LOCK_VALUE_SECTOR, NUL padded, and is
+ * written directly while the lease is held - the technique the resource
+ * creation path already uses for the uuid.
  */
-func lm_set_lvb(fd int, uuid string) error {
+func lm_write_lvb(fd int, payload []byte) error {
 	var (
 		err error
 		buf [BLOCK_SIZE]byte
 	)
-	copy(buf[:], []byte(uuid))
+	if (len(payload) >= BLOCK_SIZE) {
+		return fmt.Errorf("LOCK_VALUE payload of %d bytes does not fit in %d", len(payload), BLOCK_SIZE)
+	}
+	copy(buf[:], payload)
 	err = lm_pwrite(fd, buf[:], LOCK_VALUE_SECTOR * BLOCK_SIZE)
 	if (err != nil) {
 		return err
@@ -530,6 +591,28 @@ func lm_set_lvb(fd int, uuid string) error {
 		return err
 	}
 	return nil
+}
+
+func lm_set_lvb(fd int, uuid string) error {
+	return lm_write_lvb(fd, []byte(uuid))
+}
+
+/*
+ * Write_lvb replaces the Lock Value Block of one resource with payload. The
+ * coordinator lease keeps its epoch and mask deadline there: those two items,
+ * and nothing else.
+ */
+func Write_lvb(resource_path string, payload string) error {
+	var (
+		err error
+		fd int
+	)
+	fd, err = unix.Open(resource_path, unix.O_RDWR, 0)
+	if (err != nil) {
+		return err
+	}
+	defer unix.Close(fd)
+	return lm_write_lvb(fd, []byte(payload))
 }
 
 func Read_lvb(resource_path string) (string, error) {
