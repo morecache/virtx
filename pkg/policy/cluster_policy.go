@@ -45,11 +45,14 @@
 package policy
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"strconv"
 	"strings"
+	"time"
+
 	. "suse.com/virtx/pkg/constants"
 )
 
@@ -155,6 +158,113 @@ func Load(path string) (*Policy, error) {
 }
 
 /* Defaults returns the documented defaults, with every value's source set. */
+const REQUEST_PATH = "/vms/reg/cluster_policy.request"
+
+const (
+	REQUEST_KEY_ENABLED = "enabled"
+	REQUEST_KEY_BY = "requested_by"
+	REQUEST_KEY_AT = "requested_at"
+)
+
+/* Request is a change of the action surface that a host has asked for. */
+type Request struct {
+	Enabled bool
+	By string
+	At int64
+}
+
+/*
+ * Save_request records a change that has been asked for, in the shared
+ * registration tree, so that whoever holds the coordinator office serves it - a
+ * request must not depend on the host the operator happened to talk to.
+ *
+ * The file is small and replaced atomically. Two hosts asking at the same time
+ * leave one of the two values behind, which is the honest outcome: they asked for
+ * two different things.
+ */
+func Save_request(enabled bool, by string) error {
+	var (
+		sb strings.Builder
+	)
+	sb.WriteString("# written by virtxd when a change of the action surface is asked for, do not edit\n")
+	sb.WriteString(fmt.Sprintf("%s = %v\n", REQUEST_KEY_ENABLED, enabled))
+	sb.WriteString(fmt.Sprintf("%s = %q\n", REQUEST_KEY_BY, by))
+	sb.WriteString(fmt.Sprintf("%s = %d\n", REQUEST_KEY_AT, time.Now().UnixMilli()))
+	return write_atomic(REQUEST_PATH, []byte(sb.String()))
+}
+
+/*
+ * Load_request reads the change that has been asked for. A cluster that has asked
+ * for nothing is the normal state: a missing file is not an error, and it is told
+ * apart from a file that cannot be read.
+ */
+func Load_request() (Request, bool, error) {
+	var (
+		req Request
+		data []byte
+		err error
+		line string
+		key string
+		value string
+		cut int
+		present bool
+	)
+	data, err = os.ReadFile(REQUEST_PATH)
+	if (err != nil) {
+		if (errors.Is(err, os.ErrNotExist)) {
+			return req, false, nil
+		}
+		return req, false, err
+	}
+	for _, line = range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if (line == "" || strings.HasPrefix(line, "#")) {
+			continue
+		}
+		cut = strings.Index(line, "=")
+		if (cut < 0) {
+			continue
+		}
+		key = strings.TrimSpace(line[:cut])
+		value = strings.TrimSpace(line[cut + 1:])
+		switch (key) {
+		case REQUEST_KEY_ENABLED:
+			req.Enabled = (value == "true")
+			present = true
+		case REQUEST_KEY_BY:
+			req.By, _ = strconv.Unquote(value)
+		case REQUEST_KEY_AT:
+			req.At, _ = strconv.ParseInt(value, 10, 64)
+		}
+	}
+	if (!present) {
+		return req, false, nil
+	}
+	return req, true, nil
+}
+
+/* Request_pending reports whether a change has been asked for and not served yet. */
+func Request_pending() bool {
+	var (
+		ok bool
+		err error
+	)
+	_, ok, err = Load_request()
+	return (ok && err == nil)
+}
+
+/* Clear_request forgets the change that has been served, or given up on. */
+func Clear_request() error {
+	var (
+		err error
+	)
+	err = os.Remove(REQUEST_PATH)
+	if (err != nil && errors.Is(err, os.ErrNotExist)) {
+		return nil
+	}
+	return err
+}
+
 func Defaults() *Policy {
 	var (
 		p *Policy

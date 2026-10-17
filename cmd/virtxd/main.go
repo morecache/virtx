@@ -35,6 +35,7 @@ import (
 	"suse.com/virtx/pkg/config"
 	"suse.com/virtx/pkg/hastate"
 	"suse.com/virtx/pkg/verdict"
+	"suse.com/virtx/pkg/coord"
 )
 
 var version string = "unknown"
@@ -115,7 +116,11 @@ func main() {
 		logger.Log("%s", line)
 	}
 	verdict.Set_tier(tier)
+	coord.Set_tier(tier)
 	for _, line = range verdict.Window_lines() {
+		logger.Log("%s", line)
+	}
+	for _, line = range coord.Window_lines() {
 		logger.Log("%s", line)
 	}
 	/*
@@ -123,6 +128,10 @@ func main() {
 	 * check is fatal instead of a warning.
 	 */
 	err = verdict.Check_sanlock_tier_windows()
+	if (err != nil) {
+		logger.Fatal("%s", err.Error())
+	}
+	err = coord.Check_sanlock_tier_windows()
 	if (err != nil) {
 		logger.Fatal("%s", err.Error())
 	}
@@ -154,6 +163,20 @@ func main() {
 	 */
 	verdict.Start()
 
+	/*
+	 * coord: the coordinator role - who holds __VIRTX__COORD, whether that
+	 * holder is still renewing, and which host contends for it when the office
+	 * is empty. Holding the office is what makes a host the one that may act,
+	 * so the role does not depend on the switch of the action surface: it also
+	 * makes the host that will write a policy when an operator enables one.
+	 *
+	 * The execution half of the judgement is installed here rather than imported
+	 * by pkg/verdict, because coord already imports verdict. Nothing installs it
+	 * yet: the drive that hands a restart judgement over is deliberately not
+	 * called, so this tree cannot move a VM on its own.
+	 */
+	coord.Start()
+
 	/* create server subroutine to listen for API requests */
 	virtx_err_ch := virtx.Start_listening()
 
@@ -181,6 +204,19 @@ func main() {
 	select {
 	case sig := <-c:
 		logger.Log("Got signal: %d", sig)
+		/*
+		 * The coordinator hands the office over in its own goroutine, which
+		 * received the same signal (signal.Notify only ever adds a receiver).
+		 * Let that ending finish before this process goes away: it has to read
+		 * /proc and ask sanlock once - tens to a few hundred milliseconds - and
+		 * returning now cuts it off, which would leave the lease held by a
+		 * client this exiting process never touched.
+		 *
+		 * Bounded and fail-soft: Wait_resign gives up after
+		 * coord.RESIGN_WAIT_BUDGET and returns at once when there is nothing to
+		 * give back, so a host that is not the coordinator waits not at all.
+		 */
+		coord.Wait_resign(coord.RESIGN_WAIT_BUDGET)
 	case err = <-virtx_err_ch:
 		logger.Log("VirtX service error: %s", err.Error())
 	}
