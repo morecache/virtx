@@ -33,6 +33,7 @@ const (
 	LOCK_DIR = "/vms/lock/"
 	LOCK_SPACE = "__VIRTX__DISKS__"
 	CLUSTER_POLICY = "cluster_policy"
+	HASTATE = "hastate"
 	DEV_DIR = "/dev/"
 	CPUMODEL_VER = `-v\d+$`
 	HTTP_MAX_BODY_LEN = 1 * MiB
