@@ -409,6 +409,25 @@ func init() {
 	}
 	cmd_unregister_vm.Flags().StringVarP(&virtx.vm_register_options.Host, "host", "h", "", "Unregister VM on the specified host")
 	cmd_unregister_vm.MarkFlagRequired("host")
+	var cmd_takeover = &cobra.Command{
+		Use:   "takeover",
+		Short: "Take over a resource from a host that is gone",
+	}
+	var cmd_takeover_vm = &cobra.Command{
+		Use:   "vm --host HOST_UUID VM_UUID",
+		Short: "Take over a VM",
+		Long:  "Move a VM that belongs to a host that is no longer active to the given host, and start it there",
+		Args:  cobra.ExactArgs(1), /* UUID */
+		Run: func(cmd *cobra.Command, args []string) {
+			if (virtx.ok) {
+				vm_takeover()
+			} else {
+				vm_takeover_req(args[0])
+			}
+		},
+	}
+	cmd_takeover_vm.Flags().StringVarP(&virtx.vm_register_options.Host, "host", "h", "", "Take over the VM on the specified host")
+	cmd_takeover_vm.MarkFlagRequired("host")
 	var cmd_log = &cobra.Command{
 		Use:   "log",
 		Short: "Show the log of a resource",
@@ -483,6 +502,8 @@ func init() {
 	cmd_register.AddCommand(cmd_register_vm)
 	cmd.AddCommand(cmd_unregister)
 	cmd_unregister.AddCommand(cmd_unregister_vm)
+	cmd.AddCommand(cmd_takeover)
+	cmd_takeover.AddCommand(cmd_takeover_vm)
 	cmd.AddCommand(cmd_log)
 	cmd_log.AddCommand(cmd_log_vm)
 
