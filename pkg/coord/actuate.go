@@ -466,6 +466,11 @@ func take() error {
 		return nil
 	}
 	/*
+	 * Our own dead registration for this resource is the one thing that can keep
+	 * us from taking it: give it back before the attempt.
+	 */
+	recover_own_orphan(default_holder_ops())
+	/*
 	 * Create first, then take (row 5a). Both benign outcomes come back
 	 * as nil from Create_resource_flat: the file may already exist, or another
 	 * host may have created it a moment ago (that is the race this function is
@@ -486,6 +491,49 @@ func take() error {
 	office_pending_set(cmd)
 	logger.Debug("coord: started a holder client for %s, waiting for it to win", COORD_RESOURCE)
 	return nil
+}
+
+/*
+ * recover_own_orphan gives back an orphaned registration of this host for the
+ * coordinator resource, before the office is taken again.
+ *
+ * An orphan is a registration whose client is gone. It keeps the lease alive in
+ * the daemon, so a new client cannot acquire it and exits at once; a host in
+ * that state cannot take the office at all, and the take that keeps starting a
+ * client which cannot win also keeps killing it, which leaves one more orphan
+ * every patrol (measured 2026-10-12: a host whose own orphan blocked it took and
+ * killed a client every five seconds for as long as it ran).
+ *
+ * The startup sweep (pkg/lockman/stale.go) gives orphans back; its rule keeps
+ * one whose shared lease still names this host with a live timestamp, which is
+ * exactly what an orphan of ours looks like from the outside - the orphan is
+ * what keeps that lease alive. So the take asks for it directly.
+ */
+func recover_own_orphan(ops Holder_ops) {
+	var (
+		out string
+		err error
+		reg lockman.Local_registration
+	)
+	if (ops.Status == nil) {
+		return
+	}
+	out, err = ops.Status()
+	if (err != nil) {
+		return
+	}
+	for _, reg = range lockman.Parse_registrations(out) {
+		if (reg.Resource != COORD_RESOURCE || !reg.Orphan) {
+			continue
+		}
+		err = lockman.Release_orphan(lockman.Registration_spec(reg))
+		if (err != nil) {
+			logger.Log("coord: cannot give this host's orphaned %s registration back (%s): the take may fail",
+			           COORD_RESOURCE, err.Error())
+			continue
+		}
+		logger.Log("coord: gave this host's orphaned %s registration back before taking it again", COORD_RESOURCE)
+	}
 }
 
 /*
