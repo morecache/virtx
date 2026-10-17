@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"suse.com/virtx/pkg/lockman"
+	"suse.com/virtx/pkg/policy"
 )
 
 /*
@@ -39,6 +40,13 @@ type Published struct {
 	Unreadable int
 	Skipped int
 	Addrs []string
+	/*
+	 * Policy is the cluster policy of the round this observation was
+	 * made in: read-only consumers judge with the same settings the
+	 * observation was made under, and never resolve the policy themselves.
+	 */
+	Policy *policy.Policy
+	Origin policy.Origin
 }
 
 var published struct {
@@ -60,6 +68,8 @@ func publish(v view, probed int, isolated int) {
 	p.Unreadable = v.unreadable
 	p.Skipped = v.skipped
 	p.Addrs = append(p.Addrs, v.addrs...)
+	p.Policy = v.policy
+	p.Origin = v.origin
 	published.mu.Lock()
 	published.p = p
 	published.mu.Unlock()

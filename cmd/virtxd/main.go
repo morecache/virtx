@@ -34,6 +34,7 @@ import (
 	"suse.com/virtx/pkg/paths"
 	"suse.com/virtx/pkg/config"
 	"suse.com/virtx/pkg/hastate"
+	"suse.com/virtx/pkg/verdict"
 )
 
 var version string = "unknown"
@@ -121,6 +122,13 @@ func main() {
 	 * storage, so it starts after the cluster view exists.
 	 */
 	hastate.Start()
+
+	/*
+	 * verdict: judge every known host once per round and log it. The loop acts
+	 * only when the cluster policy has the action surface on, and even then an
+	 * action needs an execution half to be installed, which nothing does yet.
+	 */
+	verdict.Start()
 
 	/* create server subroutine to listen for API requests */
 	virtx_err_ch := virtx.Start_listening()
