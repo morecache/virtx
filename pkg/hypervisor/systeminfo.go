@@ -257,6 +257,33 @@ func system_info_loop(seconds int) error {
 	return nil
 }
 
+/*
+ * align_vm_host points one VM of a snapshot at the host uuid the snapshot
+ * itself carries: si.Host.Uuid, set from caps.Host.UUID in step 1 of
+ * system_info_get().
+ *
+ * It exists because get_domain_event() stamps every VM with machine.Uuid(),
+ * and machine.Set_uuid() runs in system_info_init() - upstream documents and
+ * implements that as "after the first successful system_info_get()" (see the
+ * comment above system_info_init). During the very first snapshot machine.Uuid()
+ * is therefore still empty, and a VM published with Host == "" is a VM no
+ * reader can place: coord.observe_old_state() trusts the remembered runstate
+ * only when the inventory places the VM at the victim, so an empty host drops
+ * the record half of the state discriminator for one round (<= the 15 s of
+ * SYSTEM_INFO_LOOP_SECONDS). The uuid that is ready at that moment is the one
+ * libvirt gave us, and that is the one the snapshot must publish - never
+ * machine.Uuid(). This is the write side of the same first-round window
+ * local_domain_policy() closes on the read side (an unknown uuid is not
+ * another host).
+ *
+ * From the second snapshot on this call changes nothing: machine.Uuid() and
+ * si.Host.Uuid are both caps.Host.UUID then, so it only makes the first one
+ * correct.
+ */
+func align_vm_host(si *SystemInfo, vm *SystemInfoVm) {
+	vm.VmInfo.VmEvent.Host = si.Host.Uuid
+}
+
 func system_info_get() (SystemInfo, error) {
 	hv.m.Lock()
 	defer hv.m.Unlock()
@@ -349,6 +376,13 @@ func system_info_get() (SystemInfo, error) {
 			logger.Log("could not get_domain_event: %s", err.Error())
 			continue
 		}
+		/*
+		 * The host uuid of this snapshot is already known (step 1 above) and it
+		 * is the one to publish: get_domain_event() stamped the VM with
+		 * machine.Uuid(), which system_info_init() fills in only after this
+		 * whole snapshot is built. See align_vm_host().
+		 */
+		align_vm_host(&si, &vm)
 		err = get_domain_details(&d, &vm.VmInfo.VmDetails)
 		if (err != nil) {
 			logger.Log("could not get_domain_details: %s", err.Error())
