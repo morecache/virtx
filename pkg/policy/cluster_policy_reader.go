@@ -83,8 +83,22 @@ const (
 type Reader struct {
 	applied Applied
 	misses int
+	origin Origin
 	warnings []string
+	/*
+	 * said is what the round before this one reported, so that a state that
+	 * simply stays the way it is - the policy file still gone, say - is said
+	 * once instead of once per round.
+	 */
+	said map[string]bool
 }
+
+/*
+ * R is the reader of this process. The decision layer resolves the policy once
+ * per round through it, so that the generation this host has applied and the
+ * misses counted so far are one story and not one per caller.
+ */
+var R = &Reader{}
 
 /*
  * Resolve returns the policy of this round and where it came from. It always
@@ -92,6 +106,47 @@ type Reader struct {
  * shared file is out of reach.
  */
 func (r *Reader) Resolve() (*Policy, Origin) {
+	var (
+		p *Policy
+		origin Origin
+	)
+	r.warnings = nil
+	p, origin = r.resolve()
+	r.keep_fresh_warnings()
+	r.origin = origin
+	return p, origin
+}
+
+/*
+ * keep_fresh_warnings drops what the round before already said and remembers
+ * what this one says. The comparison is against everything the previous round
+ * said and not against the last single message: a round that reports two states
+ * makes each of them follow the other, so both would come back in every round -
+ * measured on the cluster, the "the policy is gone" line was still written every
+ * ten seconds.
+ */
+func (r *Reader) keep_fresh_warnings() {
+	var (
+		fresh []string
+		all map[string]bool = make(map[string]bool)
+	)
+	for _, w := range r.warnings {
+		if (!r.said[w]) {
+			fresh = append(fresh, w)
+		}
+		all[w] = true
+	}
+	r.said = all
+	r.warnings = fresh
+}
+
+/* Origin is where the policy of the last Resolve came from. */
+func (r *Reader) Origin() Origin {
+	return r.origin
+}
+
+/* resolve is Resolve without the bookkeeping of one round. */
+func (r *Reader) resolve() (*Policy, Origin) {
 	var (
 		data []byte
 		err error
@@ -104,7 +159,7 @@ func (r *Reader) Resolve() (*Policy, Origin) {
 		if (!May_apply(p, r.applied)) {
 			r.warn("%s carries generation %d, which is older than the applied %d: keeping this host's copy",
 				PATH, p.Generation, r.applied.Generation)
-			return r.use_applied(), ORIGIN_APPLIED
+			return r.use_applied()
 		}
 		meta, err = Save_applied(string(data), PATH, p.Generation)
 		if (err != nil) {
@@ -138,13 +193,13 @@ func (r *Reader) Resolve() (*Policy, Origin) {
 		}
 		r.warn("%s is missing (%d of %d rounds), keeping the policy this host has",
 			PATH, r.misses, ENOENT_MAX_ROUNDS)
-		return r.use_applied(), ORIGIN_APPLIED
+		return r.use_applied()
 	}
 	r.warn("%s cannot be read (%s): keeping the policy this host has", PATH, err.Error())
-	return r.use_applied(), ORIGIN_APPLIED
+	return r.use_applied()
 }
 
-/* Warnings returns everything that went wrong while resolving. */
+/* Warnings returns what went wrong in the last resolution, and only that. */
 func (r *Reader) Warnings() []string {
 	return r.warnings
 }
@@ -155,12 +210,14 @@ func (r *Reader) Applied() Applied {
 }
 
 /*
- * use_applied is the policy this host stored when it last applied one. Without
- * a usable copy it is the documented defaults, whose switch is off; the
+ * use_applied is the policy this host stored when it last applied one, and where
+ * that policy comes from: a copy that cannot be read leaves the documented
+ * defaults, and the caller has to report that instead of claiming a copy.
+ * Without a usable copy the switch is off; the
  * generation that was applied before is remembered either way, so that an old
  * view cannot walk over it later.
  */
-func (r *Reader) use_applied() *Policy {
+func (r *Reader) use_applied() (*Policy, Origin) {
 	var (
 		p *Policy
 		meta Applied
@@ -170,13 +227,13 @@ func (r *Reader) use_applied() *Policy {
 	if (err != nil) {
 		r.warn("no usable copy of the policy on this host (%s): the documented defaults are in force",
 			err.Error())
-		return Defaults()
+		return Defaults(), ORIGIN_DEFAULTS
 	}
 	r.applied = meta
-	return p
+	return p, ORIGIN_APPLIED
 }
 
-/* warn records one thing that went wrong while resolving. */
+/* warn records one thing that went wrong while resolving this round. */
 func (r *Reader) warn(format string, args ...any) {
 	r.warnings = append(r.warnings, fmt.Sprintf(format, args...))
 }

@@ -32,22 +32,55 @@ import (
 	"suse.com/virtx/pkg/logger"
 	"suse.com/virtx/pkg/lockman"
 	"suse.com/virtx/pkg/paths"
+	"suse.com/virtx/pkg/config"
+	"suse.com/virtx/pkg/hastate"
 )
 
 var version string = "unknown"
+
+/*
+ * apply_config_flag hands the flags the operator really gave to the
+ * configuration: a flag that only fell back to its default was not given, and
+ * recording it would turn a default into an override.
+ */
+func apply_config_flag(f *flag.Flag) {
+	var (
+		key string
+		ok bool
+	)
+	key, ok = config.Flag_key(f.Name)
+	if (!ok) {
+		return
+	}
+	config.C.Override(key, f.Value.String())
+}
 
 func main() {
 	var (
 		err error
 		debug *bool
+		line string
 	)
 	logger.Log("version %s", version)
 	debug = flag.Bool("D", false, "add debug info to logs")
-	flag.Parse()
-	logger.Set_debug(*debug)
 
 	/* runtime paths: initialize the runtime binary dependencies */
 	paths.Init()
+
+	/* configuration: this host's own settings, before anything reads them */
+	config.Init()
+	flag.Int("isolation-ping-timeout-seconds", config.C.Isolation_ping_timeout_seconds,
+		"how long one ping to an isolation address may take, in seconds")
+	flag.Int("sanlock-cmd-timeout-seconds", config.C.Sanlock_cmd_timeout_seconds,
+		"how long one sanlock command may take, in seconds")
+	flag.Int("hastate-round-budget-seconds", config.C.Hastate_round_budget_seconds,
+		"how long one round of publishing and reading host reports may take, in seconds")
+	flag.Parse()
+	flag.Visit(apply_config_flag)
+	logger.Set_debug(*debug)
+	for _, line = range config.C.Lines() {
+		logger.Log("%s", line)
+	}
 
 	/* hypervisor: initialize and start listening to hypervisor events */
 	err = hypervisor.Connect()
@@ -81,6 +114,13 @@ func main() {
 		logger.Fatal("%s", err.Error())
 	}
 	serfcomm.Start_listening(hypervisor.Get_vm_event_channel(), hypervisor.Get_system_info_channel())
+
+	/*
+	 * hastate: publish what this host sees about itself and the others, and
+	 * never act on it. It reads the cluster policy with the rest of the shared
+	 * storage, so it starts after the cluster view exists.
+	 */
+	hastate.Start()
 
 	/* create server subroutine to listen for API requests */
 	virtx_err_ch := virtx.Start_listening()
