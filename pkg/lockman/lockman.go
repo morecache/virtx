@@ -51,7 +51,7 @@ const (
 	/* see sanlock_rv.h */
 	SANLK_HOSTID_BUSY = -262
 
-	LVB_SECTOR = 2002 /* see sanlock resource.c */
+	LOCK_VALUE_SECTOR = 2002 /* see sanlock resource.c */
 	BLOCK_SIZE = 512 /* on NFS, sanlock and libvirt always use 512 byte blocks */
 )
 type Lockman struct {
@@ -382,7 +382,7 @@ func Create_resource(resource_name string, uuid string) error {
 	if (err == nil) {
 		lvb, err = Read_lvb(resource_path)
 		if (err != nil) {
-			logger.Log("failed to Read LVB: %s", err)
+			logger.Log("failed to Read LOCK_VALUE: %s", err)
 			return fmt.Errorf("(0) cannot create %s for vm %s: it already exists", resource_name, uuid)
 		}
 		return fmt.Errorf("(1) cannot create %s for vm %s: it already exists for vm %s", resource_name, uuid, lvb)
@@ -416,7 +416,7 @@ func Create_resource(resource_name string, uuid string) error {
 			_ = os.Remove(path)
 			lvb, err = Read_lvb(resource_path)
 			if (err != nil) {
-				logger.Log("failed to Read LVB: %s", err)
+				logger.Log("failed to Read LOCK_VALUE: %s", err)
 				return fmt.Errorf("(2) cannot create %s for vm %s: it already exists", resource_name, uuid)
 			}
 			return fmt.Errorf("(3) cannot create %s for vm %s: it already exists for vm %s", resource_name, uuid, lvb)
@@ -442,10 +442,10 @@ func Check_resource(resource_name string, uuid string) error {
 	}
 	lvb, err = Read_lvb(resource_path)
 	if (err != nil) {
-		return fmt.Errorf("failed to Read LVB: %s", err.Error())
+		return fmt.Errorf("failed to Read LOCK_VALUE: %s", err.Error())
 	}
 	if (lvb != uuid) {
-		return fmt.Errorf("LVB %s does not match vm %s", lvb, uuid)
+		return fmt.Errorf("LOCK_VALUE %s does not match vm %s", lvb, uuid)
 	}
 	/* Ok, the path exists, and ownership is ok */
 	return nil
@@ -512,7 +512,7 @@ func lm_pread(fd int, buf []byte, offset int64) error {
 }
 
 /*
- * set the LVB (Lock Value Block). Ideally we would have a sanlock client command for this,
+ * set the LOCK_VALUE (Lock Value Block). Ideally we would have a sanlock client command for this,
  * but this works too.
  */
 func lm_set_lvb(fd int, uuid string) error {
@@ -521,7 +521,7 @@ func lm_set_lvb(fd int, uuid string) error {
 		buf [BLOCK_SIZE]byte
 	)
 	copy(buf[:], []byte(uuid))
-	err = lm_pwrite(fd, buf[:], LVB_SECTOR * BLOCK_SIZE)
+	err = lm_pwrite(fd, buf[:], LOCK_VALUE_SECTOR * BLOCK_SIZE)
 	if (err != nil) {
 		return err
 	}
@@ -545,7 +545,7 @@ func Read_lvb(resource_path string) (string, error) {
 	}
 	defer unix.Close(fd)
 
-	err = lm_pread(fd, buf[:], LVB_SECTOR * BLOCK_SIZE)
+	err = lm_pread(fd, buf[:], LOCK_VALUE_SECTOR * BLOCK_SIZE)
 	if (err != nil) {
 		return uuid, err
 	}
