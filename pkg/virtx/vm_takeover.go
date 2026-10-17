@@ -75,6 +75,7 @@ func vm_takeover(w http.ResponseWriter, r *http.Request) {
 		client_ip string
 		msg string
 		ts_start int64
+		dry_run bool
 	)
 	vr, err = httpx.Decode_request_body(r, &o)
 	if (err != nil) {
@@ -136,10 +137,19 @@ func vm_takeover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client_ip = httpx.Client_ip(r)
+	/*
+	 * A drill is requested with dry_run=1: the landing does the move and undoes
+	 * it again, and never defines or starts anything. It is a query parameter
+	 * on purpose - the generated model is not touched.
+	 */
+	dry_run = (r.URL.Query().Get("dry_run") == "1")
 	msg = "takeover from " + hostinfo.Name
+	if (dry_run) {
+		msg = "dry-run takeover from " + hostinfo.Name
+	}
 	ts_start = ts.Now()
 	go func() {
-		vm_takeover_run(uuid, old_host, old_state, hostinfo.Name, client_ip, msg, ts_start)
+		vm_takeover_run(uuid, old_host, old_state, hostinfo.Name, client_ip, msg, ts_start, dry_run)
 	}()
 	httpx.Do_response(w, http.StatusAccepted, nil)
 }
@@ -149,7 +159,7 @@ func vm_takeover(w http.ResponseWriter, r *http.Request) {
  * for the old owner's disk leases cannot make the client give up on a takeover
  * that is still going to succeed.
  */
-func vm_takeover_run(uuid string, old_host string, old_state openapi.Vmrunstate, old_host_name string, client_ip string, msg string, ts_start int64) {
+func vm_takeover_run(uuid string, old_host string, old_state openapi.Vmrunstate, old_host_name string, client_ip string, msg string, ts_start int64, dry_run bool) {
 	var (
 		err error
 		xml, canonical_xml string
@@ -159,6 +169,33 @@ func vm_takeover_run(uuid string, old_host string, old_state openapi.Vmrunstate,
 	err = reg.Move(machine.Uuid(), old_host, uuid)
 	if (err != nil) {
 		logger.Log("vm_takeover: reg.Move failed: %s", err.Error())
+		return
+	}
+	if (dry_run) {
+		/*
+		 * A drill: the move itself is real - it is the step the whole ordering
+		 * exists for - and it is undone again, so a drill leaves the cluster
+		 * exactly as it found it. Nothing past this point may run: no inventory
+		 * update, no domain definition, no start.
+		 */
+		/*
+		 * The oplog entry is written while the registration is still on this
+		 * host: after the move back, the directory it writes into belongs to
+		 * the old host again and the write fails (measured 2026-10-04: the dry
+		 * run left no oplog line, with "no such file or directory").
+		 */
+		err = vmlog.StartEnd(uuid, openapi.OpVmRegister, openapi.OPERATION_COMPLETED,
+			client_ip, msg, "Dry run: landing accepted, registration moved back.", ts_start)
+		if (err != nil) {
+			logger.Log("vm_takeover: dry-run: vmlog failed: %s", err.Error())
+		}
+		err = reg.Move(old_host, machine.Uuid(), uuid)
+		if (err != nil) {
+			logger.Log("vm_takeover: dry-run: moving the registration back failed: %s", err.Error())
+			vm_takeover_fail(uuid, old_host, old_state, defined, client_ip, msg, ts_start, err.Error())
+			return
+		}
+		logger.Log("vm_takeover: dry-run: %s: landing accepted, registration moved back", uuid)
 		return
 	}
 	/*
