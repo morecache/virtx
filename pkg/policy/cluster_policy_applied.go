@@ -49,6 +49,7 @@ package policy
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -115,19 +116,31 @@ func Load_applied() (*Policy, Applied, error) {
  * Save_applied stores one policy text as this host's copy, together with the
  * meta that records its hash, the generation it came from and where it was read
  * from. The caller passes the text it read from the shared file, so that the
- * copy is what was parsed and not a re-rendering of it.
+ * copy is what was parsed and not a re-rendering of it. The meta that was
+ * written is returned, so that a caller can remember what this host applied.
  */
-func Save_applied(text string, source string, generation int64) error {
+func Save_applied(text string, source string, generation int64) (Applied, error) {
 	var (
 		err error
-		meta string
+		meta Applied
+		sha string
 	)
+	sha = Sha256_of([]byte(text))
 	err = write_atomic(APPLIED_PATH, []byte(text))
 	if (err != nil) {
-		return err
+		return Applied{}, err
 	}
-	meta = applied_meta_text(Sha256_of([]byte(text)), source, generation)
-	return write_atomic(APPLIED_META_PATH, []byte(meta))
+	meta = Applied{
+		Generation: generation,
+		Sha256: sha,
+		Source: source,
+		Applied_at: ts.Now(),
+	}
+	err = write_atomic(APPLIED_META_PATH, []byte(applied_meta_text(meta)))
+	if (err != nil) {
+		return Applied{}, err
+	}
+	return meta, nil
 }
 
 /*
@@ -207,16 +220,31 @@ func parse_applied_meta(text string) Applied {
 	return meta
 }
 
+/*
+ * err_text is the cause of a file error, without the name of the temporary file
+ * it may mention: a message that changes every time is a message that is never
+ * recognized as the same one, and so one that is logged in every round.
+ */
+func err_text(err error) string {
+	var (
+		perr *os.PathError
+	)
+	if (errors.As(err, &perr)) {
+		return perr.Err.Error()
+	}
+	return err.Error()
+}
+
 /* applied_meta_text renders the meta file of a stored copy. */
-func applied_meta_text(sha string, source string, generation int64) string {
+func applied_meta_text(meta Applied) string {
 	var (
 		sb strings.Builder
 	)
 	sb.WriteString("# written by virtxd when it applied a policy, do not edit\n")
-	sb.WriteString(fmt.Sprintf("%s = %d\n", META_KEY_GENERATION, generation))
-	sb.WriteString(fmt.Sprintf("%s = %s\n", META_KEY_SHA256, sha))
-	sb.WriteString(fmt.Sprintf("%s = %q\n", META_KEY_SOURCE, source))
-	sb.WriteString(fmt.Sprintf("%s = %d\n", META_KEY_APPLIED_AT, ts.Now()))
+	sb.WriteString(fmt.Sprintf("%s = %d\n", META_KEY_GENERATION, meta.Generation))
+	sb.WriteString(fmt.Sprintf("%s = %s\n", META_KEY_SHA256, meta.Sha256))
+	sb.WriteString(fmt.Sprintf("%s = %q\n", META_KEY_SOURCE, meta.Source))
+	sb.WriteString(fmt.Sprintf("%s = %d\n", META_KEY_APPLIED_AT, meta.Applied_at))
 	return sb.String()
 }
 
@@ -242,7 +270,7 @@ func write_atomic(path string, data []byte) error {
 	}
 	tmp, err = os.CreateTemp(filepath.Dir(path), filepath.Base(path) + ".tmp-*")
 	if (err != nil) {
-		return err
+		return fmt.Errorf("cannot create a temporary file in %s (%s)", filepath.Dir(path), err_text(err))
 	}
 	tmpname = tmp.Name()
 	defer func() {
