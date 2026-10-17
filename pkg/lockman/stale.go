@@ -392,6 +392,39 @@ func stale_release_caller() (int, func(), error) {
  * release_orphan, resource.c:2983-3008), so a live lease - the caller's own
  * scratch lease included - is never touched.
  */
+/*
+ * Registration_spec renders one local registration the way sanlock names it, so
+ * that a caller can hand that one registration back.
+ */
+func Registration_spec(reg Local_registration) string {
+	return fmt.Sprintf("%s:%s:%s:%d", reg.Lockspace, reg.Resource, reg.Path, reg.Offset)
+}
+
+/*
+ * Release_orphan gives one orphaned registration of this host back through a
+ * registered caller: sanlock's own release is the only thing that can do it, and
+ * it has to come from a client that is registered with the daemon.
+ *
+ * The sweep above decides which orphans to give back at startup; this is the
+ * same mechanism without the decision, for the case where the decision is made
+ * elsewhere - a host that is about to take a resource again has to give its own
+ * dead registration for it back first, or the new client cannot acquire it and
+ * exits at once.
+ */
+func Release_orphan(spec string) error {
+	var (
+		caller_pid int
+		cleanup func()
+		err error
+	)
+	caller_pid, cleanup, err = stale_release_caller()
+	if (err != nil) {
+		return err
+	}
+	defer cleanup()
+	return release_orphan_with(caller_pid, spec)
+}
+
 func release_orphan_with(caller_pid int, spec string) error {
 	var (
 		output []byte
