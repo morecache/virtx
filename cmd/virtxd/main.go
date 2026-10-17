@@ -171,10 +171,11 @@ func main() {
 	 * makes the host that will write a policy when an operator enables one.
 	 *
 	 * The execution half of the judgement is installed here rather than imported
-	 * by pkg/verdict, because coord already imports verdict. Nothing installs it
-	 * yet: the drive that hands a restart judgement over is deliberately not
-	 * called, so this tree cannot move a VM on its own.
+	 * by pkg/verdict, because coord already imports verdict. It is what refuses to
+	 * act unless this host holds the office, and what re-checks a landing before
+	 * the VM is moved.
 	 */
+	verdict.Set_drive(coord.Drive_round)
 	coord.Start()
 
 	/* create server subroutine to listen for API requests */
