@@ -36,6 +36,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -46,6 +47,7 @@ import (
 	"suse.com/virtx/pkg/machine"
 	"suse.com/virtx/pkg/paths"
 	. "suse.com/virtx/pkg/constants"
+
 )
 
 /*
@@ -803,6 +805,29 @@ func release_with_ops(ops Holder_ops) {
  * fallback by the 2 s this code always had - and SIGKILL is only ever used on the
  * fallback path, when the client ignored SIGTERM. It reports which path it took.
  */
+/*
+ * process_zombie reports whether a pid is a zombie: it has exited, and it waits
+ * for this process to reap it. /proc/<pid>/stat puts the state after the command
+ * name, which may itself contain spaces and parentheses - so the state is read
+ * after the last ")".
+ */
+func process_zombie(pid int) bool {
+	var (
+		data []byte
+		err error
+		cut int
+	)
+	data, err = os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if (err != nil) {
+		return true
+	}
+	cut = strings.LastIndex(string(data), ")")
+	if (cut < 0 || cut + 2 >= len(data)) {
+		return true
+	}
+	return (string(data)[cut + 2] == 'Z')
+}
+
 func end_holder_client(c *exec.Cmd, ops Holder_ops, resource string) (graceful bool) {
 	var (
 		end Graceful_end
@@ -835,10 +860,22 @@ func end_holder_client(c *exec.Cmd, ops Holder_ops, resource string) (graceful b
 			           client_pid, resource, end.Client_exited, end.Registration_gone, end.Orphan_left)
 		}
 	}
+	if (c.ProcessState != nil || !process_alive(client_pid) || process_zombie(client_pid)) {
+		/*
+		 * The client is already gone, or a zombie this process has not reaped.
+		 * Signalling it or killing it would change nothing for it, and the kill
+		 * is what leaves an orphan behind: its placeholder child dies with it
+		 * and the daemon keeps the lease as an orphan of this host, which then
+		 * blocks the next take.
+		 */
+		logger.Log("coord: the holder client %d is already gone: not signalling it", client_pid)
+		_ = c.Wait()
+		return false
+	}
 	_ = c.Process.Signal(syscall.SIGTERM)
 	for i = 0; i < 20; i++ {
 		time.Sleep(100 * time.Millisecond)
-		if (c.ProcessState != nil || !process_alive(client_pid)) {
+		if (c.ProcessState != nil || !process_alive(client_pid) || process_zombie(client_pid)) {
 			break
 		}
 	}
