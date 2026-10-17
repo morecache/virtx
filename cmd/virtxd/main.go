@@ -61,6 +61,7 @@ func main() {
 		err error
 		debug *bool
 		line string
+		tier lockman.Tier
 	)
 	logger.Log("version %s", version)
 	debug = flag.Bool("D", false, "add debug info to logs")
@@ -99,6 +100,29 @@ func main() {
 	}
 	/* lockman: initialize the lock manager (needs system info to get the hypervisor Uuid()). */
 	err = lockman.Init(machine.Uuid())
+	if (err != nil) {
+		logger.Fatal("%s", err.Error())
+	}
+
+	/*
+	 * the effective sanlock tier: io_timeout and watchdog_fire_timeout, the two
+	 * numbers every time window of the judgement layer is derived from, with
+	 * the place they were read from - so that the startup log alone answers
+	 * "which tier is this, and where did it come from".
+	 */
+	tier = lockman.Read_tier()
+	for _, line = range tier.Lines() {
+		logger.Log("%s", line)
+	}
+	verdict.Set_tier(tier)
+	for _, line = range verdict.Window_lines() {
+		logger.Log("%s", line)
+	}
+	/*
+	 * A window that the tier does not derive is a wrong safety margin, so this
+	 * check is fatal instead of a warning.
+	 */
+	err = verdict.Check_sanlock_tier_windows()
 	if (err != nil) {
 		logger.Fatal("%s", err.Error())
 	}
