@@ -123,6 +123,12 @@ type State struct {
 	/* Mgmt_addr is this host's own management address, so that a peer can reach it
 	   even when the peer's serf view has no address for it. */
 	Mgmt_addr string `json:"mgmt_addr,omitempty"`
+	/* Judges_silent is the raw fact: a probe ran and none of the judge addresses
+	   answered. Isolated is the conclusion, and it needs the cluster to be lost as
+	   well - the two must not be read as the same thing. */
+	Judges_silent int `json:"judges_silent"`
+	/* Office_epoch is the epoch of the office this host holds, 0 for none. */
+	Office_epoch int64 `json:"office_epoch,omitempty"`
 	Reason    string `json:"reason"`
 	Heartbeat int64  `json:"heartbeat"`
 }
@@ -144,6 +150,8 @@ type Peer struct {
 	Policy_gen int64
 	/* Mgmt_addr is the management address the peer reports for itself, "" if none. */
 	Mgmt_addr string
+	/* Office_epoch is the office the peer says it holds, 0 when it says none. */
+	Office_epoch int64
 	Ts         int64
 	Age_ms     int64
 	Note       string
@@ -503,6 +511,7 @@ func (r *reader) Read_peers(now int64) ([]Peer, error) {
 		p.Probed = s.Probed
 		p.Isolation_stopped_vms = s.Isolation_stopped_vms
 		p.Mgmt_addr = s.Mgmt_addr
+		p.Office_epoch = s.Office_epoch
 		p.Policy_gen = s.Policy_gen
 		p.Ts = s.Ts
 		p.Age_ms = age
@@ -790,8 +799,18 @@ func Loop(seconds int) {
 		s.Uuid = me
 		s.Boot = boot_time()
 		s.Ts = ts.Now()
+		s.Judges_silent = isolated
+		if (isolated != 0 && !cluster_unreachable()) {
+			/*
+			 * The judges are silent but the cluster is still there: this host has a
+			 * path problem, not an isolation. Keeping the VMs is the answer, and
+			 * the report says the two apart so an operator can see it.
+			 */
+			isolated = 0
+		}
 		s.Isolated = isolated
 		s.Probed = probed
+		s.Office_epoch = office_epoch()
 		s.Isolation_stopped_vms = isolation_round(me, isolated, probed, s.Ts)
 		s.Policy_gen = v.policy_gen
 		s.Mgmt_addr = local_mgmt_addr()
