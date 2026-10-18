@@ -55,6 +55,7 @@ type isolation_run struct {
 	note map[string]string		/* what was last said about a VM, so a steady state stays quiet */
 	waiting_said bool
 	offer []string			/* the running VMs this host offers while it is isolated */
+	claim_seen map[string]string	/* who held each VM last round, to make a claim stick */
 }
 
 /*
@@ -89,6 +90,7 @@ func isolation_round(me string, isolated int, probed int, now_ms int64) []string
 		iso_run.stopped = nil
 		iso_run.asked_ms = nil
 		iso_run.note = nil
+		iso_run.claim_seen = nil
 		iso_run.waiting_said = false
 		return nil
 	}
@@ -96,6 +98,7 @@ func isolation_round(me string, isolated int, probed int, now_ms int64) []string
 		iso_run.since_ms = now_ms
 		iso_run.asked_ms = make(map[string]int64)
 		iso_run.note = make(map[string]string)
+		iso_run.claim_seen = make(map[string]string)
 	}
 	/*
 	 * The policy of this host, resolved the way the rest of the host resolves it:
@@ -182,6 +185,16 @@ func iso_one(me string, uuid string, p *policy.Policy, now_ms int64) {
 		return
 	}
 	if (owner != "" && owner != me) {
+		/*
+		 * A claim must be seen twice before a VM is stopped: a move that is undone
+		 * - a dry run, a rollback - is visible for one round, and stopping a VM
+		 * over a claim that no longer exists is exactly what must not happen.
+		 */
+		if (iso_run.claim_seen[uuid] != owner) {
+			iso_run.claim_seen[uuid] = owner
+			note_once(uuid, "claiming", "the registration moved to " + owner + " once: waiting one more round before stopping it")
+			return
+		}
 		logger.Log("isolation: %s is registered under %s now: it has been claimed, stopping it here", uuid, owner)
 	} else {
 		/* the registration has not moved: this VM stays ours */
