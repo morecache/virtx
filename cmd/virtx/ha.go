@@ -113,8 +113,8 @@ func ha_judgement_line(j openapi.HaJudgement) string {
 	if (j.E1 != "" && j.E1 != "n/a") {
 		text += fmt.Sprintf(", e1=%s", j.E1)
 	}
-	if (len(j.Isolation_stopped_vms) != 0) {
-		text += fmt.Sprintf(", stopped %d vm(s)", len(j.Isolation_stopped_vms))
+	if (len(j.Isolation_running_vms) != 0) {
+		text += fmt.Sprintf(", offers %d vm(s) it runs", len(j.Isolation_running_vms))
 	}
 	if (j.Row == "Partitioned") {
 		text += " - needs an operator"

@@ -482,6 +482,6 @@ type HaJudgement struct {
 	Mgmt_probed bool `json:"mgmt_probed"`
 	Mgmt_reachable bool `json:"mgmt_reachable"`
 	Age_ms int64 `json:"age_ms"`
-	Isolation_stopped_vms []string `json:"isolation_stopped_vms"`
+	Isolation_running_vms []string `json:"isolation_running_vms"`
 	Round_ms int64 `json:"round_ms"`
 }

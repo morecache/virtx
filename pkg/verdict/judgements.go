@@ -53,7 +53,7 @@ type Judgement struct {
 	Mgmt_probed bool
 	Mgmt_reachable bool
 	Age_ms int64
-	Isolation_stopped_vms []string
+	Isolation_running_vms []string
 	/* Round_ms is when this judgement was made, so a stale one can be told apart. */
 	Round_ms int64
 }
@@ -86,7 +86,7 @@ func publish_judgement(p hastate.Peer, c Columns, row string, verdict string, e1
 		Mgmt_probed: c.Mgmt_probed,
 		Mgmt_reachable: c.Mgmt_reachable,
 		Age_ms: p.Age_ms,
-		Isolation_stopped_vms: p.Isolation_stopped_vms,
+		Isolation_running_vms: p.Isolation_running_vms,
 		Round_ms: ts.Now(),
 	}
 	judgements_mu.Lock()

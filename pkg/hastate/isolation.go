@@ -54,6 +54,7 @@ type isolation_run struct {
 	asked_ms map[string]int64	/* when each VM was asked to stop gracefully */
 	note map[string]string		/* what was last said about a VM, so a steady state stays quiet */
 	waiting_said bool
+	offer []string			/* the running VMs this host offers while it is isolated */
 }
 
 /*
@@ -104,7 +105,7 @@ func isolation_round(me string, isolated int, probed int, now_ms int64) []string
 	p = Published_view().Policy
 	if (p == nil) {
 		note_once(me, "nopolicy", "the policy of this host cannot be read: no isolation response")
-		return iso_run.stopped
+		return iso_run.offer
 	}
 	if (!p.Ha_enabled) {
 		/*
@@ -112,29 +113,50 @@ func isolation_round(me string, isolated int, probed int, now_ms int64) []string
 		 * stop its VMs because a policy it read earlier still names a response.
 		 */
 		note_once(me, "disabled", "the action surface is off: no isolation response")
-		return iso_run.stopped
+		return iso_run.offer
 	}
 	if (p.Isolation_response == policy.RESPONSE_LEAVE_ON) {
 		note_once(me, "leave-on", "the isolation response is leave-on: the VMs stay as they are")
-		return iso_run.stopped
+		return iso_run.offer
 	}
+	/*
+	 * What this host offers is what it runs: the cluster claims from that list, and
+	 * this host stops a VM only once that VM has been claimed. Publishing the offer
+	 * starts now, before the clock runs out, because the claim has to come first.
+	 */
+	/*
+	 * The offer accumulates: a VM that has been offered stays offered until this
+	 * isolation ends, even after a claim takes its registration away - that is the
+	 * very moment this host has to act on it. Recomputed from the registrations it
+	 * would shrink to nothing exactly when it is needed.
+	 */
+	iso_run.offer = append(iso_run.offer, offer_only(iso_run.offer, running_vms(me))...)
+	offer_prune(me)
 	if (now_ms - iso_run.since_ms < int64(p.Isolation_seconds) * 1000) {
 		if (!iso_run.waiting_said) {
 			logger.Log("isolation: this host is isolated; the response (%s) starts %d s after the first such round, and the cluster starts these VMs one second later",
 			           p.Isolation_response, p.Isolation_seconds)
 			iso_run.waiting_said = true
 		}
-		return iso_run.stopped
+		return iso_run.offer
 	}
 	uuids, err = reg.Uuids(me)
 	if (err != nil) {
-		note_once(me, "novms", "the VMs of this host cannot be listed: no isolation response yet")
-		return iso_run.stopped
+		note_once(me, "novms", "the VMs of this host cannot be listed: going by what it offered")
+		uuids = nil
 	}
+	/*
+	 * The VMs to look at are the ones this host runs and offered, not only the
+	 * ones still registered here. A claim moves the registration to the host that
+	 * took the VM over, and that is exactly the signal this host is waiting for:
+	 * the domain is still here, defined and running, and stopping it needs its
+	 * uuid - not its registration.
+	 */
+	uuids = append(uuids, offer_only(uuids, iso_run.offer)...)
 	for _, uuid = range uuids {
 		iso_one(me, uuid, p, now_ms)
 	}
-	return iso_run.stopped
+	return iso_run.offer
 }
 
 /* iso_one decides and acts for one VM of this host. */
@@ -151,20 +173,19 @@ func iso_one(me string, uuid string, p *policy.Policy, now_ms int64) {
 	}
 	reachable = shared_tree_readable()
 	owner, err = reg.Owner(uuid)
-	if (!reachable) {
-		logger.Log("isolation: the shared tree cannot be read: stopping %s (a host that lost its storage must not keep writing to it)", uuid)
-	} else if (err != nil) {
+	if (!reachable || err != nil) {
 		/*
-		 * The tree answers, but this VM's owner cannot be told - a second host
-		 * directory holds it. Nobody may act on a VM whose owner is in doubt.
+		 * Nobody may stop a VM that has not been claimed, and a host that cannot
+		 * read the tree cannot learn about a claim: it keeps everything and says so.
 		 */
-		note_once(uuid, "conflict", "the registration of the VM cannot be resolved: keeping it")
+		note_once(uuid, "noclaim", "the registration tree cannot be read: keeping the VM, nobody has claimed it here")
 		return
-	} else if (owner != "" && owner != me) {
-		logger.Log("isolation: %s is registered under %s now: it has been taken over, stopping it here", uuid, owner)
+	}
+	if (owner != "" && owner != me) {
+		logger.Log("isolation: %s is registered under %s now: it has been claimed, stopping it here", uuid, owner)
 	} else {
-		/* the registration has not moved and the storage answers: this VM stays ours */
-		note_once(uuid, "keep", "the VM is still registered here and the storage is readable: keeping it")
+		/* the registration has not moved: this VM stays ours */
+		note_once(uuid, "keep", "the VM is still registered here: nobody has claimed it, keeping it")
 		return
 	}
 	if (!vm_running(uuid)) {
@@ -198,6 +219,59 @@ func iso_one(me string, uuid string, p *policy.Policy, now_ms int64) {
 	iso_run.stopped = append(iso_run.stopped, uuid)
 }
 
+/*
+ * offer_prune drops the VMs this host has finished with: it acted on a claim (the VM is
+ * stopped here) and the registration is no longer its own. A VM that was claimed and is
+ * still running here stays offered - that is the moment this host has to stop it, and its
+ * uuid must not be lost. A VM that stopped before any claim stays offered too: nobody has
+ * taken it over, so it is not finished business - and the offer would otherwise shrink to
+ * nothing exactly when it is needed (measured 2026-10-16: an isolated host went on saying
+ * it ran a VM that had been taken over and stopped here).
+ */
+func offer_prune(me string) {
+	var (
+		kept []string
+		uuid string
+		owner string
+		err error
+	)
+	for _, uuid = range iso_run.offer {
+		if (!iso_stopped(uuid)) {
+			kept = append(kept, uuid)
+			continue
+		}
+		owner, err = reg.Owner(uuid)
+		if (err != nil || owner == me) {
+			kept = append(kept, uuid)
+			continue
+		}
+	}
+	iso_run.offer = kept
+}
+
+/* offer_only keeps the VMs this host offered that the list does not hold yet. */
+func offer_only(known []string, offer []string) []string {
+	var (
+		uuid string
+		seen string
+		found bool
+		out []string
+	)
+	for _, uuid = range offer {
+		found = false
+		for _, seen = range known {
+			if (seen == uuid) {
+				found = true
+				break
+			}
+		}
+		if (!found) {
+			out = append(out, uuid)
+		}
+	}
+	return out
+}
+
 /* iso_stopped reports whether one VM is already on the list. */
 func iso_stopped(uuid string) bool {
 	var (
@@ -209,6 +283,29 @@ func iso_stopped(uuid string) bool {
 		}
 	}
 	return false
+}
+
+/*
+ * running_vms is the list of VMs this host is running right now: what it offers to
+ * the cluster while it is isolated, and the only list a claim may be taken from.
+ */
+func running_vms(me string) []string {
+	var (
+		uuids []string
+		uuid string
+		running []string
+		err error
+	)
+	uuids, err = reg.Uuids(me)
+	if (err != nil) {
+		return nil
+	}
+	for _, uuid = range uuids {
+		if (vm_running(uuid)) {
+			running = append(running, uuid)
+		}
+	}
+	return running
 }
 
 /* shared_tree_readable answers whether this host can read the registration tree. */

@@ -161,7 +161,7 @@ func ha_judgements_of(in []verdict.Judgement) []openapi.HaJudgement {
 			Mgmt_probed: j.Mgmt_probed,
 			Mgmt_reachable: j.Mgmt_reachable,
 			Age_ms: j.Age_ms,
-			Isolation_stopped_vms: j.Isolation_stopped_vms,
+			Isolation_running_vms: j.Isolation_running_vms,
 			Round_ms: j.Round_ms,
 		})
 	}

@@ -116,8 +116,9 @@ type State struct {
 	Ts        int64  `json:"ts"`
 	Isolated  int    `json:"isolated"`
 	Probed    int    `json:"probed"`
-	/* Isolation_stopped_vms are the VMs this host stopped under its isolation response. */
-	Isolation_stopped_vms []string `json:"isolation_stopped_vms,omitempty"`
+	/* Isolation_running_vms are the VMs this host runs while it is isolated: what
+	   the cluster may claim, and the only VMs it may then stop. */
+	Isolation_running_vms []string `json:"isolation_running_vms,omitempty"`
 	/* Policy_gen is the generation of the cluster policy this host applied. */
 	Policy_gen int64 `json:"policy_gen"`
 	/* Mgmt_addr is this host's own management address, so that a peer can reach it
@@ -155,8 +156,8 @@ type Peer struct {
 	Ts         int64
 	Age_ms     int64
 	Note       string
-	/* Isolation_stopped_vms are the VMs the peer says it stopped while isolated. */
-	Isolation_stopped_vms []string
+	/* Isolation_running_vms are the VMs the peer says it runs while isolated. */
+	Isolation_running_vms []string
 }
 
 /* seen is our own memory of one peer's report: we judge freshness by watching it change. */
@@ -509,7 +510,7 @@ func (r *reader) Read_peers(now int64) ([]Peer, error) {
 		p.Report = report
 		p.Reason = s.Reason
 		p.Probed = s.Probed
-		p.Isolation_stopped_vms = s.Isolation_stopped_vms
+		p.Isolation_running_vms = s.Isolation_running_vms
 		p.Mgmt_addr = s.Mgmt_addr
 		p.Office_epoch = s.Office_epoch
 		p.Policy_gen = s.Policy_gen
@@ -551,10 +552,10 @@ func describe(p Peer) string {
  * normal state and must not lengthen every line.
  */
 func iso_stopped_note(p Peer) string {
-	if (len(p.Isolation_stopped_vms) == 0) {
+	if (len(p.Isolation_running_vms) == 0) {
 		return ""
 	}
-	return fmt.Sprintf(" iso-stopped=%s", strings.Join(p.Isolation_stopped_vms, ","))
+	return fmt.Sprintf(" iso-runs=%s", strings.Join(p.Isolation_running_vms, ","))
 }
 
 /*
@@ -584,7 +585,7 @@ func change_key(probed int, isolated int, v view) string {
 	for _, p := range v.peers {
 		parts = append(parts, fmt.Sprintf("%s/%d/%s/%s/%s/%d/%s/%s",
 			p.Host_uuid, p.Host_id, p.Host_state, p.Report, p.Reason, p.Probed, p.Note,
-			strings.Join(p.Isolation_stopped_vms, ",")))
+			strings.Join(p.Isolation_running_vms, ",")))
 	}
 	for _, l := range v.leases {
 		parts = append(parts, fmt.Sprintf("%s/%d/%d/%d", l.Name, l.Timestamp, l.Owner_id, l.Owner_gen))
@@ -811,7 +812,7 @@ func Loop(seconds int) {
 		s.Isolated = isolated
 		s.Probed = probed
 		s.Office_epoch = office_epoch()
-		s.Isolation_stopped_vms = isolation_round(me, isolated, probed, s.Ts)
+		s.Isolation_running_vms = isolation_round(me, isolated, probed, s.Ts)
 		s.Policy_gen = v.policy_gen
 		s.Mgmt_addr = local_mgmt_addr()
 		s.Reason = REASON_RUNNING

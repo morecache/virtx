@@ -527,7 +527,7 @@ func landing_candidates(r verdict.Round) []Landing_candidate {
  * vm_uuid, the epoch, the landing, the outcome and the duration.
  */
 /*
- * iso_stopped_vms keeps the VMs an isolated host listed as stopped.
+ * iso_offered_vms keeps the VMs an isolated host says it runs.
  *
  * That host is alive, so its own report is what says which of its VMs it gave up
  * (isolation_stopped_vms). A VM it did not stop is still its own: free leases mean
@@ -535,7 +535,7 @@ func landing_candidates(r verdict.Round) []Landing_candidate {
  * start it somewhere else. A host that is gone says nothing and is not filtered:
  * everything it had is taken over, as it always was.
  */
-func iso_stopped_vms(victim_uuid string, candidates []string) []string {
+func iso_offered_vms(victim_uuid string, candidates []string) []string {
 	var (
 		pub hastate.Published
 		peer hastate.Peer
@@ -551,7 +551,7 @@ func iso_stopped_vms(victim_uuid string, candidates []string) []string {
 		}
 		for _, vm = range candidates {
 			listed = false
-			for _, stopped = range peer.Isolation_stopped_vms {
+			for _, stopped = range peer.Isolation_running_vms {
 				if (stopped == vm) {
 					listed = true
 					break
@@ -606,7 +606,7 @@ func Drive_round(r verdict.Round) string {
 		 * An isolated host is alive: it is the one that decided what to stop, and
 		 * its report says which VMs those were. Only those may be taken over.
 		 */
-		vm_uuids = iso_stopped_vms(r.Victim_uuid, vm_uuids)
+		vm_uuids = iso_offered_vms(r.Victim_uuid, vm_uuids)
 		logger.Log("coord: action host=%s row=%s vms=%d reason=relaunch-only-self-shut-down-vms",
 			r.Victim_uuid, r.Row, len(vm_uuids))
 		if (len(vm_uuids) == 0) {
