@@ -19,6 +19,13 @@
 # no policy yet.
 generation = 0
 #
+# changed_by is the uuid of the host that wrote this file last, and changed_at is
+# when it did (milliseconds since the epoch).  Render writes both on every change;
+# they are how an operator tells a policy that was changed from one that was only
+# read, and nothing in the cluster acts on them.
+changed_by = ""
+changed_at = 0
+#
 # ha_enabled is the switch of the action surface.  While it is off the hosts
 # judge and log, and do nothing; a file that cannot be read forces it off, and
 # so does a file that is gone while its directory is still there.
@@ -83,3 +90,37 @@ ha_isolation_seconds = 14
 # starts keeps a rescued host from taking the whole load of a failed one in one
 # breath.  The default is 5.
 ha_isolation_start_interval_seconds = 5
+
+#
+# Every setting, what it decides, and what it defaults to:
+#
+#   generation                          written by whoever changes this file; it
+#                                       only ever moves forward, and a host
+#                                       refuses an older one; default 0
+#   changed_by / changed_at             who wrote this file, and when; written by
+#                                       Render on every change
+#   ha_enabled                          the action surface: off means the hosts
+#                                       judge and log and do nothing; a file that
+#                                       cannot be read forces it off; default false
+#   ha_hastate_refresh_seconds          the pace of everything counted in rounds:
+#                                       the report of a host and its judge probe,
+#                                       the judgement loop, the coordinator patrol;
+#                                       default 5
+#   ha_hastate_stale_seconds            how long the report of a host may stand
+#                                       still before it stops being evidence about
+#                                       that host; default 30
+#   ha_isolation_address_0 .. _9        the addresses a host pings to tell "my own
+#                                       network is broken" from "that peer is
+#                                       unreachable"; unset, it probes the gateway
+#                                       of its management network
+#   ha_isolation_response               what an isolated host does with its own VMs:
+#                                       leave-on, shut-down or power-off; default
+#                                       power-off
+#   ha_isolation_seconds                how long it waits after the first round that
+#                                       saw it isolated before it acts, and the
+#                                       cluster starts those VMs a second later;
+#                                       default 14
+#   ha_isolation_start_interval_seconds how far apart the VMs it gave up are started
+#                                       again on the host that claimed them; default 5
+#   ha_max_inflight                     how many takeovers may be in flight at the
+#                                       same time; default 1
