@@ -76,3 +76,10 @@ ha_isolation_response = power-off
 # still in touch start them anywhere else.
 # The default is 14.
 ha_isolation_seconds = 14
+
+# ha_isolation_start_interval_seconds is how far apart the VMs of an isolated host
+# are started again on the host that took them over: they are started one at a
+# time, and this is the pause between two of them.  A little distance between the
+# starts keeps a rescued host from taking the whole load of a failed one in one
+# breath.  The default is 5.
+ha_isolation_start_interval_seconds = 5

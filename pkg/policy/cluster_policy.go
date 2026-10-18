@@ -72,6 +72,7 @@ const (
 	KEY_HA_MAX_INFLIGHT = "ha_max_inflight"
 	KEY_HA_ISOLATION_RESPONSE = "ha_isolation_response"
 	KEY_HA_ISOLATION_SECONDS = "ha_isolation_seconds"
+	KEY_HA_ISOLATION_START_INTERVAL_SECONDS = "ha_isolation_start_interval_seconds"
 	KEY_HA_ISOLATION_ADDRESS = "ha_isolation_address_"
 
 	DEFAULT_GENERATION = 0
@@ -92,6 +93,12 @@ const (
 	 * their disk leases go, before the cluster starts them anywhere else.
 	 */
 	DEFAULT_ISOLATION_SECONDS = 14
+
+	/*
+	 * How far apart the VMs rescued from an isolated host are started: they are
+	 * started one at a time, and this is the pause between two of them.
+	 */
+	DEFAULT_ISOLATION_START_INTERVAL_SECONDS = 5
 	ISOLATION_TAKEOVER_GAP_SECONDS = 1
 )
 
@@ -124,6 +131,7 @@ type Policy struct {
 	Max_inflight int
 	Isolation_response string
 	Isolation_seconds int
+	Isolation_start_interval_seconds int
 	Isolation_addrs []string
 
 	items map[string]item
@@ -277,6 +285,7 @@ func Defaults() *Policy {
 		Max_inflight: DEFAULT_MAX_INFLIGHT,
 		Isolation_response: DEFAULT_ISOLATION_RESPONSE,
 		Isolation_seconds: DEFAULT_ISOLATION_SECONDS,
+		Isolation_start_interval_seconds: DEFAULT_ISOLATION_START_INTERVAL_SECONDS,
 		items: make(map[string]item),
 		isolation: make(map[int]string),
 	}
@@ -289,6 +298,7 @@ func Defaults() *Policy {
 	p.remember(KEY_HA_MAX_INFLIGHT, strconv.Itoa(DEFAULT_MAX_INFLIGHT), FROM_DEFAULT)
 	p.remember(KEY_HA_ISOLATION_RESPONSE, DEFAULT_ISOLATION_RESPONSE, FROM_DEFAULT)
 	p.remember(KEY_HA_ISOLATION_SECONDS, strconv.Itoa(DEFAULT_ISOLATION_SECONDS), FROM_DEFAULT)
+	p.remember(KEY_HA_ISOLATION_START_INTERVAL_SECONDS, strconv.Itoa(DEFAULT_ISOLATION_START_INTERVAL_SECONDS), FROM_DEFAULT)
 	return p
 }
 
@@ -317,6 +327,7 @@ func (p *Policy) Lines() []string {
 		KEY_HA_MAX_INFLIGHT,
 		KEY_HA_ISOLATION_RESPONSE,
 		KEY_HA_ISOLATION_SECONDS,
+		KEY_HA_ISOLATION_START_INTERVAL_SECONDS,
 	}
 	for _, k := range keys {
 		lines = append(lines, line_of(p, k))
@@ -517,6 +528,14 @@ func (p *Policy) set(key string, value string, source Source) {
 			return
 		}
 		p.Isolation_seconds = n
+		p.remember(key, strconv.Itoa(n), source)
+	case key == KEY_HA_ISOLATION_START_INTERVAL_SECONDS:
+		n, err = positive_int(value)
+		if (err != nil) {
+			p.warn("%s: %s", key, err.Error())
+			return
+		}
+		p.Isolation_start_interval_seconds = n
 		p.remember(key, strconv.Itoa(n), source)
 	case is_isolation_key(key):
 		i, err = isolation_index(key)

@@ -86,6 +86,7 @@ func Render(p *Policy, enabled bool, generation int64, changed_by string) string
 	sb.WriteString(fmt.Sprintf("%s = %d\n", KEY_HA_MAX_INFLIGHT, p.Max_inflight))
 	sb.WriteString(fmt.Sprintf("%s = %s\n", KEY_HA_ISOLATION_RESPONSE, p.Isolation_response))
 	sb.WriteString(fmt.Sprintf("%s = %d\n", KEY_HA_ISOLATION_SECONDS, p.Isolation_seconds))
+	sb.WriteString(fmt.Sprintf("%s = %d\n", KEY_HA_ISOLATION_START_INTERVAL_SECONDS, p.Isolation_start_interval_seconds))
 	for i, addr := range p.Isolation_addrs {
 		sb.WriteString(fmt.Sprintf("%s = %s\n", isolation_key(i), addr))
 	}
