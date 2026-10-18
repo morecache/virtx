@@ -50,6 +50,8 @@ import (
 	"suse.com/virtx/pkg/hastate"
 	"suse.com/virtx/pkg/inventory"
 	"suse.com/virtx/pkg/logger"
+	"suse.com/virtx/pkg/machine"
+	"suse.com/virtx/pkg/policy"
 	"suse.com/virtx/pkg/reg"
 	"suse.com/virtx/pkg/ts"
 	"suse.com/virtx/pkg/verdict"
@@ -535,34 +537,70 @@ func landing_candidates(r verdict.Round) []Landing_candidate {
  * start it somewhere else. A host that is gone says nothing and is not filtered:
  * everything it had is taken over, as it always was.
  */
-func iso_offered_vms(victim_uuid string, candidates []string) []string {
+func iso_offered_vms(victim_uuid string, _ []string) []string {
 	var (
 		pub hastate.Published
 		peer hastate.Peer
-		vm string
-		stopped string
 		kept []string
-		listed bool
 	)
 	pub = hastate.Published_view()
 	for _, peer = range pub.Peers {
 		if (peer.Host_uuid != victim_uuid) {
 			continue
 		}
-		for _, vm = range candidates {
-			listed = false
-			for _, stopped = range peer.Isolation_running_vms {
-				if (stopped == vm) {
-					listed = true
-					break
-				}
-			}
-			if (listed) {
-				kept = append(kept, vm)
-			}
-		}
+		/*
+		 * The list this host published is the list, and it is used as it stands.
+		 * The registration of a VM moves to whoever claimed it, so asking what is
+		 * registered under the isolated host answers the wrong question - and an
+		 * isolated host normally has other VMs registered too, which is how the
+		 * shortcut that once stood here came out empty and the take-over that had
+		 * already been started was never carried through (measured 2026-10-15).
+		 */
+		kept = append(kept, peer.Isolation_running_vms...)
 	}
 	return kept
+}
+
+/* iso_last_start_ms is when a rescue last started a VM, for the start interval. */
+var iso_last_start_ms int64
+
+/*
+ * iso_claimed_vms answers the VMs this host has already claimed from that victim
+ * and not started yet: their record sits in their own registration directory,
+ * which travelled with the move, so even a different coordinator finds them and
+ * carries the rescue through.
+ */
+func iso_claimed_vms(victim_uuid string, known []string) []string {
+	var (
+		uuids []string
+		uuid string
+		from string
+		seen bool
+		mine []string
+		k string
+		err error
+	)
+	uuids, err = reg.Uuids(machine.Uuid())
+	if (err != nil) {
+		return nil
+	}
+	for _, uuid = range uuids {
+		from, err = reg.Load_claim(machine.Uuid(), uuid)
+		if (err != nil || from != victim_uuid) {
+			continue
+		}
+		seen = false
+		for _, k = range known {
+			if (k == uuid) {
+				seen = true
+				break
+			}
+		}
+		if (!seen) {
+			mine = append(mine, uuid)
+		}
+	}
+	return mine
 }
 
 func Drive_round(r verdict.Round) string {
@@ -607,6 +645,7 @@ func Drive_round(r verdict.Round) string {
 		 * its report says which VMs those were. Only those may be taken over.
 		 */
 		vm_uuids = iso_offered_vms(r.Victim_uuid, vm_uuids)
+		vm_uuids = append(vm_uuids, iso_claimed_vms(r.Victim_uuid, vm_uuids)...)
 		logger.Log("coord: action host=%s row=%s vms=%d reason=relaunch-only-self-shut-down-vms",
 			r.Victim_uuid, r.Row, len(vm_uuids))
 		if (len(vm_uuids) == 0) {
@@ -614,6 +653,31 @@ func Drive_round(r verdict.Round) string {
 		}
 	}
 	budget = max_inflight() - count_inflight()
+	if (r.Row == verdict.ROW_ISOLATED) {
+		/*
+		 * A rescue starts its VMs one at a time, at the pace the policy sets: a
+		 * host that takes over another's load should not take all of it in one
+		 * breath. What does not fit is not dropped - the next round picks it up
+		 * from the claim records and from the list of the isolated host.
+		 */
+		var (
+			ip *policy.Policy
+			interval_seconds int
+		)
+		ip = current_policy()
+		interval_seconds = 5
+		if (ip != nil && ip.Isolation_start_interval_seconds > 0) {
+			interval_seconds = ip.Isolation_start_interval_seconds
+		}
+		if (r.Now_ms - iso_last_start_ms < int64(interval_seconds) * 1000) {
+			logger.Log("coord: action host=%s row=%s result=pending reason=start-interval interval=%ds",
+				r.Victim_uuid, r.Row, interval_seconds)
+			return "action=pending reason=start-interval"
+		}
+		if (budget > 1) {
+			budget = 1
+		}
+	}
 	if (budget < 1) {
 		logger.Log("coord: action host=%s row=%s vms=%d result=pending reason=concurrency-limit inflight=%d",
 			r.Victim_uuid, r.Row, len(vm_uuids), count_inflight())

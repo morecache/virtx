@@ -515,6 +515,19 @@ const (
  * re-checks (the gate and the third party among them) are the evidence that
  * matters; the caller logs it.
  */
+/* claim_of names the host this VM was claimed from, for the log. */
+func claim_of(uuid string) string {
+	var (
+		from string
+		err error
+	)
+	from, err = reg.Load_claim(machine.Uuid(), uuid)
+	if (err != nil) {
+		return "an earlier claim"
+	}
+	return from
+}
+
 func placement_of(decision_layer bool, victim string, me string, inv_host string, inv_known bool,
 	registered_under_victim bool, registered_here bool, victim_active bool) (string, string) {
 	if (!decision_layer) {
@@ -528,6 +541,21 @@ func placement_of(decision_layer bool, victim string, me string, inv_host string
 	}
 	if (victim == me) {
 		return "", REFUSE_VICTIM_IS_ME
+	}
+	if (registered_here && !registered_under_victim) {
+		/*
+		 * The registration already sits here: this is the second half of a claim
+		 * that was made earlier, and there is nothing left to move. The other
+		 * gates - the epoch, the mask window, a live third party, the capacity -
+		 * stay exactly as they are.
+		 *
+		 * Read from the shared registration tree and not from the inventory: a
+		 * claim moves a directory in that tree and the tree can be read at once,
+		 * while the inventory is fed by gossip and may never carry the record at
+		 * all - which is what refused a retry with not-registered-there after its
+		 * own first attempt had already claimed the VM (measured 2026-10-15).
+		 */
+		return me, ""
 	}
 	if (!registered_under_victim) {
 		return "", REFUSE_NOT_REGISTERED_THERE
@@ -675,11 +703,24 @@ func vm_takeover_run(uuid string, old_host string, old_state openapi.Vmrunstate,
 		xml, canonical_xml string
 		defined bool
 	)
-	/* move the whole per-VM registration directory to this host */
-	err = reg.Move(machine.Uuid(), old_host, uuid)
-	if (err != nil) {
-		logger.Log("vm_takeover: reg.Move failed: %s", err.Error())
-		return
+	if (old_host == machine.Uuid()) {
+		/*
+		 * Resuming a claim made earlier: the registration is already here and the
+		 * record of it is in the VM's own directory. A second move would fail, and
+		 * it would destroy the only evidence that this VM is on its way.
+		 */
+		logger.Log("vm_takeover: %s is already registered here: resuming the claim from %s", uuid, claim_of(uuid))
+	} else {
+		/* move the whole per-VM registration directory to this host */
+		err = reg.Move(machine.Uuid(), old_host, uuid)
+		if (err != nil) {
+			logger.Log("vm_takeover: reg.Move failed: %s", err.Error())
+			return
+		}
+		err = reg.Save_claim(machine.Uuid(), uuid, old_host)
+		if (err != nil) {
+			logger.Log("vm_takeover: cannot record the claim: %s", err.Error())
+		}
 	}
 	if (dry_run) {
 		/*
@@ -820,6 +861,10 @@ func vm_takeover_run(uuid string, old_host string, old_state openapi.Vmrunstate,
 		vm_takeover_fail(uuid, old_host, old_state, defined, client_ip, msg, ts_start,
 			takeover_failure(TAKEOVER_FAIL_BOOT, err), keep_reg)
 		return
+	}
+	err = reg.Clear_claim(machine.Uuid(), uuid)
+	if (err != nil) {
+		logger.Log("vm_takeover: cannot clear the claim record: %s", err.Error())
 	}
 	err = vmlog.StartEnd(uuid, openapi.OpVmRegister, openapi.OPERATION_COMPLETED, client_ip, msg, "Taken over.", ts_start)
 	if (err != nil) {
