@@ -61,6 +61,7 @@ import (
 	"suse.com/virtx/pkg/machine"
 	"suse.com/virtx/pkg/policy"
 	"suse.com/virtx/pkg/reg"
+	"suse.com/virtx/pkg/verdict"
 )
 
 /*
@@ -83,6 +84,8 @@ type State struct {
 	Acked []string
 	Missing []string
 	Pending bool
+	/* Judgements is what this host concluded about its peers, for the operators. */
+	Judgements []verdict.Judgement
 }
 
 /*
@@ -374,6 +377,7 @@ func collect(st State) State {
 		st.Acked = append(st.Acked, p.Host_uuid)
 	}
 	st.Pending = (len(st.Missing) != 0)
+	st.Judgements = verdict.Judgements()
 	return st
 }
 

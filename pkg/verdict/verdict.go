@@ -657,6 +657,7 @@ func Loop(seconds int) {
 			 */
 			rows = append(rows, Peer_row{ Host_uuid: peer.Host_uuid, Name: peer.Name, Row: row })
 			line = line_of(peer, c, row, verdict, e1, armed)
+			publish_judgement(peer, c, row, verdict, e1, armed)
 			key = fmt.Sprintf("%s/%s/%v/%s/%v/%v/%s", row, verdict, c.Report_fresh,
 				peer.Host_state, c.Mgmt_known, c.Mgmt_reachable, e1)
 			/*

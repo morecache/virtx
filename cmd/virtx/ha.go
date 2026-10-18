@@ -66,4 +66,58 @@ func ha_show(st *openapi.HaState) {
 		}
 		fmt.Fprintf(virtx.w, "  waiting for\t%s\n", uuid)
 	}
+	/*
+	 * What this host concluded about its peers. Only what asks for something is
+	 * printed: a cluster where every judgement is a no-op stays as quiet as it
+	 * was before this line existed.
+	 */
+	for _, j := range st.Judgements {
+		if (j.Verdict == "" || j.Verdict == "no-op") {
+			continue
+		}
+		fmt.Fprintf(virtx.w, "%s\n", ha_judgement_line(j))
+	}
+}
+
+/*
+ * ha_judgement_line is the one line an operator reads about one judgement, in
+ * the words of what it asks for: an alert is for a person, a hold is a decision
+ * the cluster is not taking, and an action is one it did take.
+ */
+func ha_judgement_line(j openapi.HaJudgement) string {
+	var (
+		what string = "hold"
+		text string
+	)
+	if (j.Verdict == "alert-only") {
+		what = "alert"
+	}
+	if (j.Verdict == "restart") {
+		what = "action"
+	}
+	text = fmt.Sprintf("%s\t%s: %s", what, j.Name, j.Row)
+	if (j.Report != "") {
+		text += fmt.Sprintf(", report %s", j.Report)
+	}
+	if (j.Lease != "") {
+		text += fmt.Sprintf(", lease %s", j.Lease)
+	}
+	if (!j.Mgmt_known) {
+		text += ", mgmt unknown"
+	} else if (j.Mgmt_reachable) {
+		text += ", mgmt reachable"
+	} else {
+		text += ", mgmt unreachable"
+	}
+	text += fmt.Sprintf(", age %ds", j.Age_ms / 1000)
+	if (j.E1 != "" && j.E1 != "n/a") {
+		text += fmt.Sprintf(", e1=%s", j.E1)
+	}
+	if (len(j.Isolation_stopped_vms) != 0) {
+		text += fmt.Sprintf(", stopped %d vm(s)", len(j.Isolation_stopped_vms))
+	}
+	if (j.Row == "Partitioned") {
+		text += " - needs an operator"
+	}
+	return text
 }

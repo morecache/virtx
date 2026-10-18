@@ -458,4 +458,30 @@ type HaState struct {
 	Pending bool `json:"pending"`
 	/* Names is what the inventory calls each of the hosts listed above. */
 	Names map[string]string `json:"names"`
+	/* Judgements is what this host concluded about its peers in the last round. */
+	Judgements []HaJudgement `json:"judgements"`
+}
+
+/*
+ * HaJudgement is one round of judgement about one host, as this host concluded
+ * it: the row and the verdict that were selected, the evidence they rest on, and
+ * what that host says about itself, including the VMs it says it stopped under
+ * its isolation response.
+ */
+type HaJudgement struct {
+	Name string `json:"name"`
+	Uuid string `json:"uuid"`
+	Row string `json:"row"`
+	Verdict string `json:"verdict"`
+	E1 string `json:"e1"`
+	Armed bool `json:"armed"`
+	Report_fresh bool `json:"report_fresh"`
+	Lease string `json:"lease"`
+	Report string `json:"report"`
+	Mgmt_known bool `json:"mgmt_known"`
+	Mgmt_probed bool `json:"mgmt_probed"`
+	Mgmt_reachable bool `json:"mgmt_reachable"`
+	Age_ms int64 `json:"age_ms"`
+	Isolation_stopped_vms []string `json:"isolation_stopped_vms"`
+	Round_ms int64 `json:"round_ms"`
 }

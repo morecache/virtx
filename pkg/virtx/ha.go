@@ -29,6 +29,7 @@ import (
 	"suse.com/virtx/pkg/inventory"
 	"suse.com/virtx/pkg/logger"
 	"suse.com/virtx/pkg/model"
+	"suse.com/virtx/pkg/verdict"
 )
 
 /* ha_state_of renders one switch state for the client. */
@@ -43,6 +44,7 @@ func ha_state_of(st ha.State) openapi.HaState {
 	o.Missing = st.Missing
 	o.Pending = st.Pending
 	o.Names = ha_names_of(append(append([]string(nil), st.Acked...), st.Missing...))
+	o.Judgements = ha_judgements_of(st.Judgements)
 	return o
 }
 
@@ -135,4 +137,33 @@ func ha_put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ha_response(w, st)
+}
+
+/* ha_judgements_of turns the judgements of this host into what the API carries. */
+func ha_judgements_of(in []verdict.Judgement) []openapi.HaJudgement {
+	var (
+		out []openapi.HaJudgement
+		j verdict.Judgement
+	)
+	out = make([]openapi.HaJudgement, 0, len(in))
+	for _, j = range in {
+		out = append(out, openapi.HaJudgement{
+			Name: j.Name,
+			Uuid: j.Host_uuid,
+			Row: j.Row,
+			Verdict: j.Verdict,
+			E1: j.E1,
+			Armed: j.Armed,
+			Report_fresh: j.Report_fresh,
+			Lease: j.Lease,
+			Report: j.Report,
+			Mgmt_known: j.Mgmt_known,
+			Mgmt_probed: j.Mgmt_probed,
+			Mgmt_reachable: j.Mgmt_reachable,
+			Age_ms: j.Age_ms,
+			Isolation_stopped_vms: j.Isolation_stopped_vms,
+			Round_ms: j.Round_ms,
+		})
+	}
+	return out
 }
