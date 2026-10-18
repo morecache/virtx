@@ -102,6 +102,19 @@ const (
 	ISOLATION_TAKEOVER_GAP_SECONDS = 1
 )
 
+/*
+ * Isolation_start_interval answers the pace at which the VMs rescued from an
+ * isolated host are started: the configured value, or the documented default
+ * when it is not set. One answer for the coordinator that paces the starts and
+ * for the log line that describes them.
+ */
+func (p *Policy) Isolation_start_interval() int {
+	if (p != nil && p.Isolation_start_interval_seconds > 0) {
+		return p.Isolation_start_interval_seconds
+	}
+	return DEFAULT_ISOLATION_START_INTERVAL_SECONDS
+}
+
 /* Source is the layer a value came from, as the log prints it. */
 type Source string
 

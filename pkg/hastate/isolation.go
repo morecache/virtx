@@ -137,8 +137,8 @@ func isolation_round(me string, isolated int, probed int, now_ms int64) []string
 	offer_prune(me)
 	if (now_ms - iso_run.since_ms < int64(p.Isolation_seconds) * 1000) {
 		if (!iso_run.waiting_said) {
-			logger.Log("isolation: this host is isolated; the response (%s) starts %d s after the first such round, and the cluster starts these VMs one second later",
-			           p.Isolation_response, p.Isolation_seconds)
+			logger.Log("isolation: this host is isolated; the response (%s) starts %d s after the first such round, and the VMs it gives up are started one at a time, %d s apart",
+			           p.Isolation_response, p.Isolation_seconds, p.Isolation_start_interval())
 			iso_run.waiting_said = true
 		}
 		return iso_run.offer

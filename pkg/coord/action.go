@@ -715,10 +715,7 @@ func Drive_round(r verdict.Round) string {
 			interval_seconds int
 		)
 		ip = current_policy()
-		interval_seconds = 5
-		if (ip != nil && ip.Isolation_start_interval_seconds > 0) {
-			interval_seconds = ip.Isolation_start_interval_seconds
-		}
+		interval_seconds = ip.Isolation_start_interval()
 		if (r.Now_ms - iso_last_start_ms < int64(interval_seconds) * 1000) {
 			logger.Log("coord: action host=%s row=%s result=pending reason=start-interval interval=%ds",
 				r.Victim_uuid, r.Row, interval_seconds)
