@@ -66,6 +66,9 @@ import (
  */
 const ATTEMPT_SEQ_FIRST = 1
 
+/* ATTEMPT_SEQ_MAX is the last tier: a take-over is tried at most this many times. */
+const ATTEMPT_SEQ_MAX = 3
+
 /*
  * The concurrency limit (the design's "within the concurrency
  * limit") is the configuration key max_inflight, whose documented default is 1:
@@ -255,6 +258,29 @@ func (m *Term_memory) Outcome(key string) string {
 	return m.keys[key]
 }
 
+/*
+ * next_free_attempt walks the tiers above the first one and answers the first
+ * tier this term has not used, or 0 when they are all spent. A tier is a separate
+ * idempotency key, which is what lets a failed attempt be tried again without ever
+ * resending a key that has already been executed.
+ */
+func next_free_attempt(mem *Term_memory, victim_uuid string, epoch int64, vm_uuid string) int {
+	var (
+		tier int
+	)
+	for tier = ATTEMPT_SEQ_FIRST + 1; tier <= ATTEMPT_SEQ_MAX; tier++ {
+		/*
+		 * Outcome and not Allow: Allow records the key it is asked about, so
+		 * asking whether a tier is free would spend it. Only the plan below,
+		 * which really issues the attempt, records anything.
+		 */
+		if (mem.Outcome(Idempotency_key(epoch, victim_uuid, vm_uuid, tier)) == "") {
+			return tier
+		}
+	}
+	return 0
+}
+
 /* Planned is one VM the coordinator may take over now. */
 type Planned struct {
 	Vm_uuid string
@@ -302,15 +328,39 @@ func Plan_round(epoch int64, victim_uuid string, vm_uuids []string, candidates [
 		key = Idempotency_key(epoch, victim_uuid, vm_uuid, ATTEMPT_SEQ_FIRST)
 		if (!mem.Allow(epoch, key)) {
 			/*
-			 * The key was already used in this term. That is not a duplicate:
-			 * it is an attempt whose outcome we know, so the audit line says
-			 * what became of it (attempt-refused, attempt-timed-out, ...).
+			 * The key was already used in this term. That is not a duplicate: it
+			 * is an attempt whose outcome we know, so the audit line says what
+			 * became of it (attempt-refused, attempt-timed-out, ...).
 			 */
 			var (
 				outcome string = mem.Outcome(key)
 			)
 			if (outcome == "") {
 				outcome = OUTCOME_ISSUED
+			}
+			/*
+			 * One outcome is a retry: the attempt was accepted and the landing confirmation
+			 * never showed the VM running. That is what a take-over looks like
+			 * when the disk lock of the VM is still held by the host that has
+			 * just stopped it - the start fails, and a moment later the same
+			 * start succeeds. The next tier is a new idempotency key, so nothing
+			 * that was executed is ever sent again; everything else stays put: an
+			 * attempt still in flight is waited for, and a refusal or a landed
+			 * take-over is not repeated.
+			 */
+			if (outcome == OUTCOME_TIMED_OUT) {
+				attempt := next_free_attempt(mem, victim_uuid, epoch, vm_uuid)
+				if (attempt != 0 && mem.Allow(epoch, Idempotency_key(epoch, victim_uuid, vm_uuid, attempt))) {
+					planned = append(planned, Planned{
+						Vm_uuid: vm_uuid,
+						Landing: landing,
+						Epoch: epoch,
+						Attempt: attempt,
+						Key: Idempotency_key(epoch, victim_uuid, vm_uuid, attempt),
+					})
+					continue
+				}
+				outcome = "tiers-exhausted"
 			}
 			pending = append(pending, Pending{ vm_uuid, "attempt-" + outcome })
 			continue
