@@ -458,6 +458,15 @@ type HaState struct {
 	Pending bool `json:"pending"`
 	/* Names is what the inventory calls each of the hosts listed above. */
 	Names map[string]string `json:"names"`
+	/* Coordinator is the host that holds the coordinator office, "" when none does. */
+	Coordinator string `json:"coordinator"`
+	Coordinator_name string `json:"coordinator_name"`
+	Coordinator_epoch int64 `json:"coordinator_epoch"`
+	/* Isolated says whether the host that served this request has concluded that it is
+	   cut off: its view of the other hosts is the shared ledger then, and nothing else. */
+	Isolated bool `json:"isolated"`
+	/* Applied_by is the policy generation each host has applied, by host name. */
+	Applied_by map[string]int64 `json:"applied_by"`
 	/* Judgements is what this host concluded about its peers in the last round. */
 	Judgements []HaJudgement `json:"judgements"`
 }
@@ -481,6 +490,8 @@ type HaJudgement struct {
 	Mgmt_known bool `json:"mgmt_known"`
 	Mgmt_probed bool `json:"mgmt_probed"`
 	Mgmt_reachable bool `json:"mgmt_reachable"`
+	/* Mgmt_addr is the management address that was probed, "" when none was known. */
+	Mgmt_addr string `json:"mgmt_addr"`
 	Age_ms int64 `json:"age_ms"`
 	Isolation_running_vms []string `json:"isolation_running_vms"`
 	Round_ms int64 `json:"round_ms"`

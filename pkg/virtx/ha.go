@@ -24,10 +24,13 @@ import (
 	"net/http"
 	"strconv"
 
+	"suse.com/virtx/pkg/coord"
 	"suse.com/virtx/pkg/ha"
+	"suse.com/virtx/pkg/hastate"
 	"suse.com/virtx/pkg/httpx"
 	"suse.com/virtx/pkg/inventory"
 	"suse.com/virtx/pkg/logger"
+	"suse.com/virtx/pkg/machine"
 	"suse.com/virtx/pkg/model"
 	"suse.com/virtx/pkg/verdict"
 )
@@ -44,6 +47,14 @@ func ha_state_of(st ha.State) openapi.HaState {
 	o.Missing = st.Missing
 	o.Pending = st.Pending
 	o.Names = ha_names_of(append(append([]string(nil), st.Acked...), st.Missing...))
+	o.Coordinator, o.Coordinator_name, o.Coordinator_epoch = coordinator_of(st)
+	/*
+	 * Whether the host that answered is itself cut off. The reader of the lines below
+	 * needs it: an isolated host cannot reach the others at all, so it reports every one
+	 * of them as partitioned from itself, and that says nothing about their health.
+	 */
+	o.Isolated = (hastate.Self_isolated() != 0)
+	o.Applied_by = applied_by_of(st)
 	o.Judgements = ha_judgements_of(st.Judgements)
 	return o
 }
@@ -53,6 +64,71 @@ func ha_state_of(st ha.State) openapi.HaState {
  * can say which host is behind instead of printing a uuid and leaving the reader
  * to look it up.
  */
+/*
+ * applied_by_of answers the policy generation each host has applied, by host name.
+ * One number for "here" cannot answer the operator's question, which is which host is
+ * behind; this host's own answer is the one it reported the switch with, and the peers'
+ * answers are what their reports say (0 when a peer could not read it).
+ */
+func applied_by_of(st ha.State) map[string]int64 {
+	var (
+		pub hastate.Published
+		peer hastate.Peer
+		names map[string]string
+		out map[string]int64
+		name string
+	)
+	names = ha_names_of(append(append([]string(nil), st.Acked...), st.Missing...))
+	out = make(map[string]int64)
+	name = names[machine.Uuid()]
+	if (name == "") {
+		name = machine.Uuid()
+	}
+	out[name] = st.Applied
+	pub = hastate.Published_view()
+	for _, peer = range pub.Peers {
+		name = names[peer.Host_uuid]
+		if (name == "") {
+			name = peer.Name
+		}
+		if (name == "") {
+			name = peer.Host_uuid
+		}
+		out[name] = peer.Policy_gen
+	}
+	return out
+}
+
+/*
+ * coordinator_of answers who holds the coordinator office: this host when its own
+ * office epoch says so, otherwise the peer whose report carries the highest one -
+ * the same reading the cluster uses to decide who may act. An office nobody holds
+ * is an empty answer, not a guess.
+ */
+func coordinator_of(st ha.State) (string, string, int64) {
+	var (
+		pub hastate.Published
+		peer hastate.Peer
+		names map[string]string
+		uuid string
+		name string
+		best int64
+	)
+	names = ha_names_of(append(append([]string(nil), st.Acked...), st.Missing...))
+	if epoch, ok := coord.Term(); ok {
+		return machine.Uuid(), names[machine.Uuid()], epoch
+	}
+	pub = hastate.Published_view()
+	for _, peer = range pub.Peers {
+		if (peer.Office_epoch > best) {
+			best = peer.Office_epoch
+			uuid = peer.Host_uuid
+			name = names[peer.Host_uuid]
+		}
+	}
+	return uuid, name, best
+}
+
 func ha_names_of(uuids []string) map[string]string {
 	var (
 		names map[string]string = make(map[string]string)
@@ -160,6 +236,7 @@ func ha_judgements_of(in []verdict.Judgement) []openapi.HaJudgement {
 			Mgmt_known: j.Mgmt_known,
 			Mgmt_probed: j.Mgmt_probed,
 			Mgmt_reachable: j.Mgmt_reachable,
+			Mgmt_addr: j.Mgmt_addr,
 			Age_ms: j.Age_ms,
 			Isolation_running_vms: j.Isolation_running_vms,
 			Round_ms: j.Round_ms,

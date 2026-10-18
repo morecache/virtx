@@ -52,6 +52,8 @@ type Judgement struct {
 	Mgmt_known bool
 	Mgmt_probed bool
 	Mgmt_reachable bool
+	/* Mgmt_addr is the management address this judgement probed; "" when none known. */
+	Mgmt_addr string
 	Age_ms int64
 	Isolation_running_vms []string
 	/* Round_ms is when this judgement was made, so a stale one can be told apart. */
@@ -85,6 +87,7 @@ func publish_judgement(p hastate.Peer, c Columns, row string, verdict string, e1
 		Mgmt_known: c.Mgmt_known,
 		Mgmt_probed: c.Mgmt_probed,
 		Mgmt_reachable: c.Mgmt_reachable,
+		Mgmt_addr: p.Mgmt_addr,
 		Age_ms: p.Age_ms,
 		Isolation_running_vms: p.Isolation_running_vms,
 		Round_ms: ts.Now(),

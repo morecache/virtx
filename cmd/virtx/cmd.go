@@ -456,6 +456,7 @@ func init() {
 			if (virtx.ok) {
 				if (virtx.result != nil) {
 					ha_show(virtx.result.(*openapi.HaState))
+					ha_wait_for_acks(virtx.result.(*openapi.HaState))
 				}
 			} else {
 				ha_set_req(true)
@@ -475,6 +476,7 @@ func init() {
 			if (virtx.ok) {
 				if (virtx.result != nil) {
 					ha_show(virtx.result.(*openapi.HaState))
+					ha_wait_for_acks(virtx.result.(*openapi.HaState))
 				}
 			} else {
 				ha_set_req(false)
@@ -559,8 +561,14 @@ func init() {
 	cmd.AddCommand(cmd_takeover)
 	cmd.AddCommand(cmd_enable)
 	cmd_enable.AddCommand(cmd_enable_ha)
+	cmd_enable_ha.Flags().BoolVar(&virtx.ha_wait, "wait", true, "Wait for the hosts to acknowledge the change (default)")
+	cmd_enable_ha.Flags().BoolVar(&virtx.ha_no_wait, "no-wait", false, "Do not wait for the acknowledgements")
+	cmd_enable_ha.Flags().IntVar(&virtx.ha_timeout, "timeout", 3, "Seconds to wait for them (0 means the default)")
 	cmd.AddCommand(cmd_disable)
 	cmd_disable.AddCommand(cmd_disable_ha)
+	cmd_disable_ha.Flags().BoolVar(&virtx.ha_wait, "wait", true, "Wait for the hosts to acknowledge the change (default)")
+	cmd_disable_ha.Flags().BoolVar(&virtx.ha_no_wait, "no-wait", false, "Do not wait for the acknowledgements")
+	cmd_disable_ha.Flags().IntVar(&virtx.ha_timeout, "timeout", 3, "Seconds to wait for them (0 means the default)")
 	cmd_takeover.AddCommand(cmd_takeover_vm)
 	cmd.AddCommand(cmd_log)
 	cmd_log.AddCommand(cmd_log_vm)
