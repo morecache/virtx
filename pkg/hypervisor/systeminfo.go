@@ -182,6 +182,18 @@ func system_info_save_vminfo(si *SystemInfo) {
 		return
 	}
 	for _, vm := range si.Vms {
+		/*
+		 * Only what is still registered here: a claim moves a VM's registration to
+		 * the host that took it over, and this host keeps running the domain until
+		 * it has seen that claim and stopped it. Publishing it anyway is what made
+		 * the cluster view say a claimed VM was still on the host it had been taken
+		 * from - and the reader of that view is the coordinator deciding whether the
+		 * take-over is done (measured 2026-10-15: the view showed the VM back on its
+		 * old host for a round while the take-over was under way).
+		 */
+		if (reg.Access(si.Host.Uuid, vm.VmInfo.Uuid) != nil) {
+			continue
+		}
 		vms = append(vms, vm.VmInfo)
 	}
 	err = reg.Save_vminfo(si.Host.Uuid, si.Host.VI_ts, vms)
