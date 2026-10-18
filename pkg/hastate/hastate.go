@@ -810,6 +810,7 @@ func Loop(seconds int) {
 			isolated = 0
 		}
 		s.Isolated = isolated
+		iso_self = isolated
 		s.Probed = probed
 		s.Office_epoch = office_epoch()
 		s.Isolation_running_vms = isolation_round(me, isolated, probed, s.Ts)

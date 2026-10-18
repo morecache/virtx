@@ -539,7 +539,22 @@ func Loop(seconds int) {
 			}
 			role = ROLE_OBSERVE
 		}
-		if (!wanted()) {
+		if (hastate.Self_isolated() != 0) {
+			/*
+			 * This host cannot reach the cluster, so it cannot claim anything for
+			 * anybody, and while it holds the office nobody else may. Give it up: the
+			 * office is what has to move for the VMs to be rescued. This is asked
+			 * first, and not inside the "switch is off" arm below, because an isolated
+			 * host has no business holding the office whatever the switch says - with
+			 * the action surface on, the office is exactly what has to move for the
+			 * response to happen at all (measured 2026-10-16: isolated=1, role=keep,
+			 * and no host ever saw the office free).
+			 */
+			if (holder != nil || pending != nil) {
+				Resign("this host is isolated: a host that cannot reach the cluster must not hold the office")
+			}
+			role = ROLE_OBSERVE
+		} else if (!wanted()) {
 			/*
 			 * There is nothing for the office to do: the action surface is off and
 			 * no change has been asked for. This host does not compete for the

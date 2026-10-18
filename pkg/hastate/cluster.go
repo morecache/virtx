@@ -152,3 +152,15 @@ func cluster_unreachable() bool {
 	}
 	return (probed != 0)
 }
+
+var iso_self int
+
+/*
+ * Self_isolated answers whether this host concluded that it is isolated, as of the
+ * last reporting round. It is the same conclusion the report carries, kept here so
+ * that the part of this host that holds the office can act on it: a host that is
+ * isolated is exactly the host that must not be answering for the cluster.
+ */
+func Self_isolated() int {
+	return iso_self
+}
