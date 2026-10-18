@@ -120,6 +120,9 @@ type State struct {
 	Isolation_stopped_vms []string `json:"isolation_stopped_vms,omitempty"`
 	/* Policy_gen is the generation of the cluster policy this host applied. */
 	Policy_gen int64 `json:"policy_gen"`
+	/* Mgmt_addr is this host's own management address, so that a peer can reach it
+	   even when the peer's serf view has no address for it. */
+	Mgmt_addr string `json:"mgmt_addr,omitempty"`
 	Reason    string `json:"reason"`
 	Heartbeat int64  `json:"heartbeat"`
 }
@@ -139,6 +142,8 @@ type Peer struct {
 	Probed     int    /* the peer's own probed flag: 0 means it never probed a judge */
 	/* Policy_gen is the generation the peer says it has applied, unreadable as 0. */
 	Policy_gen int64
+	/* Mgmt_addr is the management address the peer reports for itself, "" if none. */
+	Mgmt_addr string
 	Ts         int64
 	Age_ms     int64
 	Note       string
@@ -497,6 +502,7 @@ func (r *reader) Read_peers(now int64) ([]Peer, error) {
 		p.Reason = s.Reason
 		p.Probed = s.Probed
 		p.Isolation_stopped_vms = s.Isolation_stopped_vms
+		p.Mgmt_addr = s.Mgmt_addr
 		p.Policy_gen = s.Policy_gen
 		p.Ts = s.Ts
 		p.Age_ms = age
@@ -543,7 +549,22 @@ func iso_stopped_note(p Peer) string {
 }
 
 /*
- * change_key is what we compare between runs to decide whether something is
+ * local_mgmt_addr is this host's own management address, taken from the member
+ * tags serf publishes for it: the same address a peer would reach it on.
+ */
+func local_mgmt_addr() string {
+	var (
+		hostdata inventory.Hostdata
+		err error
+	)
+	hostdata, err = inventory.Get_hostdata(machine.Uuid())
+	if (err != nil) {
+		return ""
+	}
+	return hostdata.Man_ip
+}
+
+/* change_key is what we compare between runs to decide whether something is
  * worth a log line: the ages move on every run, so they must not be part of it.
  */
 func change_key(probed int, isolated int, v view) string {
@@ -773,6 +794,7 @@ func Loop(seconds int) {
 		s.Probed = probed
 		s.Isolation_stopped_vms = isolation_round(me, isolated, probed, s.Ts)
 		s.Policy_gen = v.policy_gen
+		s.Mgmt_addr = local_mgmt_addr()
 		s.Reason = REASON_RUNNING
 		if (isolated != 0) {
 			s.Reason = REASON_ISOLATED

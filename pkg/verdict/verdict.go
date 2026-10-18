@@ -442,12 +442,29 @@ func columns_of(p hastate.Peer) Columns {
 		err error
 	)
 	/*
-	 * ④ ping the host's management address, taken from our own serf view of the
-	 * membership. If we cannot learn the address at all, the column stays
-	 * unknown and Select_row refuses to select a row that needs it.
+	 * ④ ping the host's management address. The address the host reports for
+	 * itself in its self report is used first: it is on the shared storage, so it
+	 * is there for a host that is out of touch, while the serf view of such a host
+	 * is exactly what is missing. Only when the report carries no address do we
+	 * fall back to our own serf view of the membership, and that is a lookup, not
+	 * a judgement: the serf view decides nothing.
+	 *
+	 * If neither has an address, the column stays unknown and Select_row refuses
+	 * to select a row that needs it.
 	 */
-	addr, err = serfcomm.Management_addr(p.Host_uuid)
-	if (err == nil) {
+	addr = p.Mgmt_addr
+	if (addr == "") {
+		/*
+		 * Transitional: a host that still runs a build which does not report an
+		 * address of its own is found through its serf member tag. That is a
+		 * lookup and never a judgement: the serf view decides nothing here.
+		 */
+		addr, err = serfcomm.Management_addr(p.Host_uuid)
+		if (err != nil) {
+			addr = ""
+		}
+	}
+	if (addr != "") {
 		c.Mgmt_known, c.Mgmt_probed, c.Mgmt_reachable = mgmt_reaches(addr)
 	}
 	c.Lease_readable = (p.Host_state != "unknown")
