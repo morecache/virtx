@@ -134,6 +134,15 @@ func reg_save_file(filename string, data []byte) error {
 }
 
 /*
+ * Save_shared writes one file of the shared registration tree atomically: a
+ * reader on another host sees the old file or the new one, never a partial one.
+ * The directory containing filename must already exist.
+ */
+func Save_shared(filename string, data []byte) error {
+	return reg_save_file(filename, data)
+}
+
+/*
  * Create the per-VM directory and save the domain XML in it.
  * Fails if the per-VM directory already exists in this host directory.
  * The caller must ensure that the VM is not registered in another host directory.

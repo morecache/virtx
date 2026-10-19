@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 
 	"suse.com/virtx/pkg/coord"
@@ -32,6 +33,7 @@ import (
 	"suse.com/virtx/pkg/logger"
 	"suse.com/virtx/pkg/machine"
 	"suse.com/virtx/pkg/model"
+	"suse.com/virtx/pkg/policy"
 	"suse.com/virtx/pkg/verdict"
 )
 
@@ -182,6 +184,10 @@ func ha_get(w http.ResponseWriter, r *http.Request) {
  * coordinator on its next round, or by whoever takes the office next.
  */
 func ha_put(w http.ResponseWriter, r *http.Request) {
+	if (r.URL.Query().Get("coordinator") != "") {
+		ha_switch(w, r.URL.Query().Get("coordinator"))
+		return
+	}
 	var (
 		arg string
 		enable bool
@@ -213,6 +219,66 @@ func ha_put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ha_response(w, st)
+}
+
+/*
+ * ha_switch answers PUT /ha?coordinator=<host>: ask the coordinator office to
+ * move to that host.
+ *
+ * Any host may receive the request: it lives on the shared registration tree, and
+ * the current holder is what serves it - it gives the office back, and the host
+ * that was named takes it on its next patrol. The other hosts stay out of the
+ * contest until the request has been served or has run out (pkg/coord).
+ *
+ * The action surface has to be on, because an office that moves is an office that
+ * acts. A change of the surface that is still on its way counts as on, because the
+ * request that turns it on is exactly what the office serves - an operator who
+ * enables HA and moves the office in a row must not be told that HA is off. A
+ * change that is turning the surface off is refused: moving the office of a
+ * cluster that is stopping is not a request to honour.
+ */
+func ha_switch(w http.ResponseWriter, host string) {
+	var (
+		p *policy.Policy
+		req policy.Request
+		pending bool
+		info inventory.HostInfo
+		ok bool
+		err error
+	)
+	p, err = policy.Load(policy.PATH)
+	if (err != nil && !errors.Is(err, os.ErrNotExist)) {
+		http.Error(w, "the cluster policy cannot be read", http.StatusInternalServerError)
+		return
+	}
+	req, pending, _ = policy.Load_request()
+	if (pending && !req.Enabled) {
+		http.Error(w, "the action surface is being turned off: the office is not moved", http.StatusConflict)
+		return
+	}
+	if (!(pending && req.Enabled) && (p == nil || !p.Ha_enabled)) {
+		http.Error(w, "the action surface is off: enable it with \"virtx enable ha\" first", http.StatusConflict)
+		return
+	}
+	info, ok = inventory.Find_host(host)
+	if (!ok) {
+		http.Error(w, "no such host: " + host, http.StatusNotFound)
+		return
+	}
+	if (info.Uuid == machine.Uuid()) {
+		if _, mine := coord.Term(); mine {
+			ha_response(w, ha.Get())
+			return
+		}
+	}
+	err = coord.Save_switch(info.Uuid, machine.Uuid())
+	if (err != nil) {
+		logger.Log("ha: %s cannot be written: %s", coord.SWITCH_PATH, err.Error())
+		http.Error(w, "the switch request cannot be written", http.StatusInternalServerError)
+		return
+	}
+	logger.Log("ha: the coordinator office is asked to move to %s (%s)", info.Name, info.Uuid)
+	ha_response(w, ha.Get())
 }
 
 /* ha_judgements_of turns the judgements of this host into what the API carries. */

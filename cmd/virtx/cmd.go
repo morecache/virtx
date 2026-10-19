@@ -483,6 +483,33 @@ func init() {
 			}
 		},
 	}
+	var cmd_set = &cobra.Command{
+		Use:   "set",
+		Short: "Set a property of a cluster wide capability",
+	}
+	var cmd_set_ha = &cobra.Command{
+		Use:   "ha",
+		Short: "Ask the coordinator office to move to a host",
+		Long:  "Ask the coordinator office to move to the host named by --coordinator: the holder gives the office back, and that host takes it on its next patrol. The action surface has to be on",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			var (
+				host string
+			)
+			host, _ = cmd.Flags().GetString("coordinator")
+			if (virtx.ok) {
+				if (virtx.result != nil) {
+					ha_wait_for_coordinator(host, virtx.result.(*openapi.HaState))
+				}
+			} else {
+				ha_switch_req(host)
+			}
+		},
+	}
+	cmd_set_ha.Flags().String("coordinator", "", "Host (name or UUID) that should hold the coordinator office")
+	cmd_set_ha.MarkFlagRequired("coordinator")
+	cmd_set_ha.Flags().BoolVar(&virtx.ha_no_wait, "no-wait", false, "Do not wait for the office to move")
+	cmd_set_ha.Flags().IntVar(&virtx.ha_timeout, "timeout", 15, "Seconds to wait for the office to move (0 means the default)")
 	var cmd_log = &cobra.Command{
 		Use:   "log",
 		Short: "Show the log of a resource",
@@ -570,6 +597,8 @@ func init() {
 	cmd_disable_ha.Flags().BoolVar(&virtx.ha_no_wait, "no-wait", false, "Do not wait for the acknowledgements")
 	cmd_disable_ha.Flags().IntVar(&virtx.ha_timeout, "timeout", 3, "Seconds to wait for them (0 means the default)")
 	cmd_takeover.AddCommand(cmd_takeover_vm)
+	cmd.AddCommand(cmd_set)
+	cmd_set.AddCommand(cmd_set_ha)
 	cmd.AddCommand(cmd_log)
 	cmd_log.AddCommand(cmd_log_vm)
 

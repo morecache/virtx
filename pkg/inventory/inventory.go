@@ -134,6 +134,24 @@ func Get_hostinfo(uuid string) (HostInfo, error) {
 	return hostdata.Info, fmt.Errorf("inventory: no such host %s", uuid)
 }
 
+/*
+ * Find_host answers the host this cluster knows by that name, or by that uuid.
+ * A name is what an operator types; the uuid is what the cluster uses.
+ */
+func Find_host(name_or_uuid string) (HostInfo, bool) {
+	var (
+		hostdata Hostdata
+	)
+	inventory.m.RLock()
+	defer inventory.m.RUnlock()
+	for _, hostdata = range inventory.hosts {
+		if (hostdata.Info.Uuid == name_or_uuid || hostdata.Info.Name == name_or_uuid) {
+			return hostdata.Info, true
+		}
+	}
+	return HostInfo{}, false
+}
+
 func Get_vminfo(uuid string) (VmInfo, error) {
 	inventory.m.RLock()
 	defer inventory.m.RUnlock()

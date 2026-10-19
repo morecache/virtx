@@ -36,6 +36,7 @@ import (
 
 	"suse.com/virtx/pkg/hastate"
 	"suse.com/virtx/pkg/lockman"
+	"suse.com/virtx/pkg/machine"
 	"suse.com/virtx/pkg/logger"
 	"suse.com/virtx/pkg/policy"
 	"suse.com/virtx/pkg/ts"
@@ -581,6 +582,18 @@ func Loop(seconds int) {
 		 */
 		drop_losing_holder()
 		/*
+		 * A switch request that names another host keeps this host out of the
+		 * contest until that host takes the office or the request runs out: the
+		 * operator asked for that host, and a race would hand the office to
+		 * whoever happened to be quicker. The request has a deadline, so a target
+		 * that never comes cannot keep the others out of it for long.
+		 */
+		if (role == ROLE_CANDIDATE) {
+			if _, elsewhere := switch_elsewhere(machine.Uuid()); elsewhere {
+				role = ROLE_OBSERVE
+			}
+		}
+		/*
 		 * The contending half: an absent lease (row 5a) or a peer that
 		 * stopped renewing and whose handoff window has elapsed (row 3) lets us
 		 * try. take() is bounded, so the patrol never blocks (5.3.1).
@@ -636,6 +649,23 @@ func Loop(seconds int) {
 		 */
 		if (office_holder_get() != nil && Change_pending()) {
 			write_change()
+		}
+		/*
+		 * The office has been asked to move: if it is ours, give it back now that
+		 * any change this host was asked to write has been written, and let the
+		 * target take it on its next patrol. A request that names this host is
+		 * already satisfied, and one that has run out is removed.
+		 */
+		if (office_holder_get() != nil) {
+			target, live := Switch_target(ts.Now())
+			switch {
+			case (!live):
+				Clear_switch()
+			case (target == machine.Uuid()):
+				Clear_switch()
+			default:
+				Resign("the coordinator office is being switched to " + target)
+			}
 		}
 		line = fmt.Sprintf("row=%s role=%s owner=%d me=%d renewing=%v since=%d lease_read_ok=%v status_read_ok=%v holder=%s",
 			state.String(), role.String(), owner_id, me, is_renewing, other_dead_since,

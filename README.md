@@ -325,6 +325,33 @@ Notes:
   turns the switch off, while an unreachable tree leaves the host running with the copy it
   applied.
 
+# COORDINATOR
+
+HA decisions are made by one host at a time: the coordinator. It holds a sanlock
+lease (`__VIRTX__COORD`) on shared storage, so there is exactly one, and the other
+hosts can tell a coordinator that died from one that is merely out of reach. Which
+host holds it is decided by whoever takes the lease first; `virtx get ha` shows who
+that is.
+
+An operator can ask for a particular host to take it, for example before taking
+the current coordinator down for maintenance:
+
+```
+virtx set ha --coordinator <host>
+```
+
+The request is written to the shared registration tree, and the current holder is
+what serves it: it gives the office back, and the named host takes the lease on its
+next patrol. The other hosts stay out of the contest until that host has taken it
+or the request has run out (30 seconds), so the move is not a race. A named host
+that never comes costs that bounded wait and nothing else: after it, any host may
+take the office again, and the command says the move was not confirmed.
+
+The action surface has to be on (`virtx enable ha`). A change of the surface that
+is still being acknowledged counts as on, so enabling HA and moving the office can
+be done one after the other; a cluster that is being turned off refuses the move,
+because there is nothing left to coordinate.
+
 # STORAGE
 
 Storage Management in VirtX is implicit with the lifecycle of VMS.
@@ -415,7 +442,8 @@ It is built alongside virtxd from the same source tree (cmd/virtx-check-lvb/).
 
 # TODO
 
-- HA features are not implemented yet
+- HA: the partition response is not implemented yet (a host that is cut off
+  from the coordinator holds its VMs and logs, it does not stop them)
 - Minimal host selection algorithm (for HA)
 - cloud-init seed ISOs (/vms/ds/ci/<uuid>/) are never removed: remove them under lease.
 

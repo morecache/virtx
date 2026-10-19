@@ -21,6 +21,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 	"sort"
 
@@ -114,6 +115,75 @@ func ha_wait_for_acks(st *openapi.HaState) {
 			continue
 		}
 		fmt.Fprintf(virtx.w, "  not confirmed\t%s\n", uuid)
+	}
+}
+
+/* HA_SWITCH_WAIT_DEFAULT is how long a switch waits for the office to move. */
+const HA_SWITCH_WAIT_DEFAULT = 15
+
+/* ha_switch_req asks the coordinator office to move to one host. */
+func ha_switch_req(host string) {
+	virtx.path = "/ha?coordinator=" + url.QueryEscape(host)
+	virtx.method = "PUT"
+	virtx.arg = nil
+	virtx.result = &openapi.HaState{}
+}
+
+/* ha_is_host answers whether the state names that host as the coordinator. */
+func ha_is_host(st *openapi.HaState, host string) bool {
+	return (st.Coordinator == host || st.Coordinator_name == host)
+}
+
+/*
+ * ha_wait_for_coordinator waits for the office to move to the host that was asked
+ * for, and prints where it has got when the wait runs out.
+ *
+ * Running out is not a failure of the request: the request is on the shared tree,
+ * and the holder serves it on its next patrol, so a target that is slow, or that
+ * is itself being restarted, only delays it. The command prints the state as it
+ * is; a caller that wants a gate passes --timeout and reads "get ha" afterwards.
+ */
+func ha_wait_for_coordinator(host string, st *openapi.HaState) {
+	var (
+		wait int
+		deadline time.Time
+		response *http.Response
+		fresh *openapi.HaState
+		err error
+	)
+	if (virtx.ha_no_wait) {
+		ha_show(st)
+		fmt.Fprintf(virtx.w, "REQUESTED\t%s: the office is asked to move; use \"virtx get ha\" to watch it\n", host)
+		return
+	}
+	wait = virtx.ha_timeout
+	if (wait <= 0) {
+		wait = HA_SWITCH_WAIT_DEFAULT
+	}
+	deadline = time.Now().Add(time.Duration(wait) * time.Second)
+	fresh = nil
+	for (time.Now().Before(deadline)) {
+		time.Sleep(HA_WAIT_POLL_MS * time.Millisecond)
+		response, err = httpx.Do_request(virtx.api_server, "GET", "/ha", nil)
+		if (err != nil) {
+			break
+		}
+		fresh = &openapi.HaState{}
+		_, err = httpx.Decode_response_body(response, fresh)
+		if (err != nil) {
+			break
+		}
+		if (ha_is_host(fresh, host)) {
+			break
+		}
+	}
+	if (fresh == nil) {
+		ha_show(st)
+		return
+	}
+	ha_show(fresh)
+	if (!ha_is_host(fresh, host)) {
+		fmt.Fprintf(virtx.w, "NOT CONFIRMED\t%s is not the coordinator yet: the request stays on the shared tree until it runs out\n", host)
 	}
 }
 
